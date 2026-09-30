@@ -1,27 +1,28 @@
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from datetime import datetime, timezone
 
 import httpx
 from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
     ContextTypes,
+    MessageHandler,
     filters,
 )
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
-PORT = int(os.getenv("PORT", "10000"))
 
+PORT = int(os.getenv("PORT", "10000"))
 API_BASE = "https://v3.football.api-sports.io"
 
 
-# -------------------------
-# Render health server
-# -------------------------
+# =========================
+# RENDER HEALTH SERVER
+# =========================
 
 class HealthHandler(BaseHTTPRequestHandler):
 
@@ -29,43 +30,70 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"GoalLogic AI is running.")
+        self.wfile.write(b"GoalLogic AI is running")
 
     def log_message(self, format, *args):
-        pass
+        return
 
 
 def start_health_server():
-    server = HTTPServer(
-        ("0.0.0.0", PORT),
-        HealthHandler
-    )
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
     server.serve_forever()
 
 
-# -------------------------
-# Telegram /start
-# -------------------------
+# =========================
+# API HELPER
+# =========================
 
-async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def api_get(endpoint, params=None):
 
     headers = {
         "x-apisports-key": FOOTBALL_API_KEY
     }
 
+    async with httpx.AsyncClient(timeout=20) as client:
+
+        response = await client.get(
+            f"{API_BASE}/{endpoint}",
+            headers=headers,
+            params=params
+        )
+
+        return response
+
+
+# =========================
+# /START
+# =========================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text(
+        "⚽ GoalLogic AI is online!\n\n"
+        "Available commands:\n\n"
+        "/team Chelsea\n"
+        "/fixtures Chelsea\n"
+        "/apitest\n\n"
+        "You can also send a match such as:\n"
+        "Chelsea vs Arsenal"
+    )
+
+
+# =========================
+# /APITEST
+# =========================
+
+async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     try:
-        async with httpx.AsyncClient() as client:
 
-            response = await client.get(
-                f"{API_BASE}/status",
-                headers=headers
-            )
+        response = await api_get("status")
 
-            await update.message.reply_text(
-                f"🔧 FOOTBALL API TEST\n\n"
-                f"HTTP Status: {response.status_code}\n\n"
-                f"Response:\n{response.text[:3000]}"
-            )
+        await update.message.reply_text(
+            "🔧 FOOTBALL API TEST\n\n"
+            f"HTTP Status: {response.status_code}\n\n"
+            f"Response:\n{response.text[:2500]}"
+        )
 
     except Exception as e:
 
@@ -73,90 +101,53 @@ async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ API test failed:\n{e}"
         )
 
-    await update.message.reply_text(
-        "⚽ GoalLogic AI is online!\n\n"
-        "Available commands:\n\n"
-        "/team Chelsea\n"
-        "/fixtures Chelsea\n"
-        "/apitest"
-    )
 
-
-# -------------------------
-# API test
-# -------------------------
-
-async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    await update.message.reply_text(
-        "✅ Football API connection was previously "
-        "confirmed successfully."
-    )
-
-
-# -------------------------
-# Team search
-# -------------------------
+# =========================
+# /TEAM
+# =========================
 
 async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if not FOOTBALL_API_KEY:
-        await update.message.reply_text(
-            "❌ Football API key is missing."
-        )
-        return
-
     if not context.args:
+
         await update.message.reply_text(
-            "Example:\n/team Chelsea"
+            "Use:\n/team Chelsea"
         )
+
         return
 
     team_name = " ".join(context.args)
 
-    await update.message.reply_text(
-        f"🔎 Searching for {team_name}..."
-    )
-
-    headers = {
-        "x-apisports-key": FOOTBALL_API_KEY
-    }
-
-    params = {
-        "search": team_name
-    }
-
     try:
 
-        async with httpx.AsyncClient(timeout=15) as client:
-
-            response = await client.get(
-                f"{API_BASE}/teams",
-                headers=headers,
-                params=params
-            )
-
-        if response.status_code != 200:
-
-            await update.message.reply_text(
-                f"❌ API error: {response.status_code}"
-            )
-            return
+        response = await api_get(
+            "teams",
+            {"search": team_name}
+        )
 
         data = response.json()
+
+        if data.get("errors"):
+
+            await update.message.reply_text(
+                f"❌ API error:\n{data['errors']}"
+            )
+
+            return
 
         teams = data.get("response", [])
 
         if not teams:
 
             await update.message.reply_text(
-                f"❌ No team found for {team_name}"
+                f"❌ No team found for: {team_name}"
             )
+
             return
 
-        message = "✅ Teams found:\n\n"
+        reply = f"🔎 Teams matching '{team_name}':\n\n"
 
-        for item in teams[:5]:
+        for item in teams[:10]:
 
             team = item.get("team", {})
 
@@ -164,287 +155,253 @@ async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             team_id = team.get("id", "Unknown")
             country = team.get("country", "Unknown")
 
-            message += (
+            reply += (
                 f"⚽ {name}\n"
                 f"ID: {team_id}\n"
                 f"Country: {country}\n\n"
             )
 
-        await update.message.reply_text(message)
+        await update.message.reply_text(reply)
 
     except Exception as e:
 
         await update.message.reply_text(
-            f"❌ Connection error:\n{str(e)[:300]}"
+            f"⚠️ Error searching team:\n{e}"
         )
 
 
-# -------------------------
-# Fixtures
-# -------------------------
+# =========================
+# /FIXTURES
+# =========================
 
 async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
+
         await update.message.reply_text(
-            "Use: /fixtures Team Name"
+            "Use:\n/fixtures Chelsea"
         )
+
         return
 
     team_name = " ".join(context.args)
 
-    headers = {
-        "x-apisports-key": FOOTBALL_API_KEY
-    }
-
     try:
+
         # Find team
-        async with httpx.AsyncClient() as client:
+        team_response = await api_get(
+            "teams",
+            {"search": team_name}
+        )
 
-            search = await client.get(
-                f"{API_BASE}/teams",
-                headers=headers,
-                params={"search": team_name}
+        team_data = team_response.json()
+
+        if team_data.get("errors"):
+
+            await update.message.reply_text(
+                f"❌ Team search error:\n{team_data['errors']}"
             )
 
-            data = search.json()
+            return
 
-            teams = data.get("response", [])
+        teams = team_data.get("response", [])
 
-            if not teams:
-                await update.message.reply_text(
-                    "❌ Team not found."
-                )
-                return
+        if not teams:
 
-            team_id = teams[0]["team"]["id"]
-
-            # Get next fixtures
-            fixtures_response = await client.get(
-                f"{API_BASE}/fixtures",
-                headers=headers,
-                params={
-                    "team": team_id,
-                    "next": 5
-                }
+            await update.message.reply_text(
+                f"❌ Team not found: {team_name}"
             )
 
-            fixtures_data = fixtures_response.json()
+            return
 
-            matches = fixtures_data.get("response", [])
+        # Prefer an exact team-name match
+        selected_team = None
 
-            if not matches:
-                await update.message.reply_text(
-                    "ℹ️ No upcoming fixtures found."
-                )
-                return
+        for item in teams:
 
-            reply = f"⚽ Upcoming fixtures for {team_name}\n\n"
+            name = item.get("team", {}).get("name", "")
 
-            for match in matches:
-                home = match["teams"]["home"]["name"]
-                away = match["teams"]["away"]["name"]
-                date = match["fixture"]["date"]
+            if name.lower() == team_name.lower():
+                selected_team = item
+                break
 
-                reply += (
-                    f"📅 {date[:10]}\n"
-                    f"{home} vs {away}\n\n"
-                )
+        if selected_team is None:
+            selected_team = teams[0]
 
-            await update.message.reply_text(reply)
+        team = selected_team.get("team", {})
+
+        team_id = team.get("id")
+        official_name = team.get("name", team_name)
+
+        # Get next 10 fixtures
+        fixture_response = await api_get(
+            "fixtures",
+            {
+                "team": team_id,
+                "next": 10
+            }
+        )
+
+        fixture_data = fixture_response.json()
+
+        if fixture_data.get("errors"):
+
+            await update.message.reply_text(
+                f"❌ Fixture API error:\n{fixture_data['errors']}"
+            )
+
+            return
+
+        matches = fixture_data.get("response", [])
+
+        if not matches:
+
+            await update.message.reply_text(
+                "ℹ️ The API returned no upcoming fixtures.\n\n"
+                f"Team: {official_name}\n"
+                f"Team ID: {team_id}\n"
+                f"API results: {fixture_data.get('results', 0)}\n\n"
+                "Try /apitest to check the API connection."
+            )
+
+            return
+
+        reply = (
+            f"📅 Upcoming fixtures for {official_name}\n\n"
+        )
+
+        for match in matches:
+
+            fixture = match.get("fixture", {})
+            teams_info = match.get("teams", {})
+            league = match.get("league", {})
+
+            home = teams_info.get("home", {}).get(
+                "name", "Unknown"
+            )
+
+            away = teams_info.get("away", {}).get(
+                "name", "Unknown"
+            )
+
+            date_string = fixture.get("date")
+
+            if date_string:
+
+                try:
+
+                    date_object = datetime.fromisoformat(
+                        date_string.replace("Z", "+00:00")
+                    )
+
+                    date_display = date_object.strftime(
+                        "%d %b %Y, %H:%M UTC"
+                    )
+
+                except Exception:
+
+                    date_display = date_string
+
+            else:
+
+                date_display = "Date unavailable"
+
+            league_name = league.get(
+                "name",
+                "Unknown competition"
+            )
+
+            reply += (
+                f"📅 {date_display}\n"
+                f"⚽ {home} vs {away}\n"
+                f"🏆 {league_name}\n\n"
+            )
+
+        await update.message.reply_text(reply)
 
     except Exception as e:
+
         await update.message.reply_text(
             f"⚠️ Error fetching fixtures:\n{e}"
         )
 
-    if not FOOTBALL_API_KEY:
-        await update.message.reply_text(
-            "❌ Football API key is missing."
-        )
-        return
 
-    if not context.args:
-        await update.message.reply_text(
-            "Example:\n/fixtures Chelsea"
-        )
-        return
-
-    team_name = " ".join(context.args)
-
-    await update.message.reply_text(
-        f"🔎 Finding fixtures for {team_name}..."
-    )
-
-    headers = {
-        "x-apisports-key": FOOTBALL_API_KEY
-    }
-
-    try:
-
-        async with httpx.AsyncClient(timeout=15) as client:
-
-            # Find the team
-            team_response = await client.get(
-                f"{API_BASE}/teams",
-                headers=headers,
-                params={"search": team_name}
-            )
-
-            if team_response.status_code != 200:
-
-                await update.message.reply_text(
-                    f"❌ Team API error: "
-                    f"{team_response.status_code}"
-                )
-                return
-
-            team_data = team_response.json()
-
-            teams = team_data.get("response", [])
-
-            if not teams:
-
-                await update.message.reply_text(
-                    f"❌ No team found for {team_name}"
-                )
-                return
-
-            # Use the first matching team
-            team_id = teams[0]["team"]["id"]
-
-            # Get next fixtures
-            fixture_response = await client.get(
-                f"{API_BASE}/fixtures",
-                headers=headers,
-                params={
-                    "team": team_id,
-                    "next": 5
-                }
-            )
-
-            if fixture_response.status_code != 200:
-
-                await update.message.reply_text(
-                    f"❌ Fixture API error: "
-                    f"{fixture_response.status_code}"
-                )
-                return
-
-            fixture_data = fixture_response.json()
-
-            fixtures_list = fixture_data.get(
-                "response", []
-            )
-
-        if not fixtures_list:
-
-            await update.message.reply_text(
-                f"ℹ️ No upcoming fixtures were returned "
-                f"for {team_name}."
-            )
-            return
-
-        message = (
-            f"📅 Upcoming fixtures for "
-            f"{teams[0]['team']['name']}:\n\n"
-        )
-
-        for item in fixtures_list:
-
-            fixture = item.get("fixture", {})
-            match_teams = item.get("teams", {})
-
-            home = match_teams.get(
-                "home", {}
-            ).get("name", "Unknown")
-
-            away = match_teams.get(
-                "away", {}
-            ).get("name", "Unknown")
-
-            date = fixture.get(
-                "date", "Unknown"
-            )
-
-            message += (
-                f"⚽ {home} vs {away}\n"
-                f"🕒 {date}\n\n"
-            )
-
-        await update.message.reply_text(message)
-
-    except Exception as e:
-
-        await update.message.reply_text(
-            f"❌ Fixture error:\n{str(e)[:300]}"
-        )
-
-
-# -------------------------
-# Normal messages
-# -------------------------
+# =========================
+# NORMAL MESSAGES
+# =========================
 
 async def handle_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    await update.message.reply_text(
-        "📥 Match received:\n\n"
-        f"{update.message.text}\n\n"
-        "🔧 Analysis engine is being connected..."
-    )
+    message = update.message.text.strip()
+
+    if " vs " in message.lower():
+
+        await update.message.reply_text(
+            "⚽ Match received!\n\n"
+            f"{message}\n\n"
+            "🔧 Match analysis engine will be connected next."
+        )
+
+    else:
+
+        await update.message.reply_text(
+            "⚽ GoalLogic AI received your message.\n\n"
+            "Try:\n"
+            "/team Chelsea\n"
+            "/fixtures Chelsea\n"
+            "/apitest"
+        )
 
 
-# -------------------------
-# Main
-# -------------------------
+# =========================
+# MAIN
+# =========================
 
 def main():
 
     if not TELEGRAM_BOT_TOKEN:
+
         raise RuntimeError(
             "TELEGRAM_BOT_TOKEN is missing."
         )
 
     if not FOOTBALL_API_KEY:
+
         raise RuntimeError(
             "FOOTBALL_API_KEY is missing."
         )
 
-    # Start Render health server
     threading.Thread(
         target=start_health_server,
         daemon=True
     ).start()
 
-    # Start Telegram bot
-    app = Application.builder().token(
-        TELEGRAM_BOT_TOKEN
-    ).build()
+    application = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .build()
+    )
 
-   async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "⚽ GoalLogic AI is online!\n\n"
-        "Available commands:\n\n"
-        "/team Chelsea\n"
-        "/fixtures Chelsea\n"
-        "/)
+    application.add_handler(
+        CommandHandler("start", start)
+    )
 
-    app.add_handler(
+    application.add_handler(
         CommandHandler("apitest", api_test)
     )
 
-    app.add_handler(
+    application.add_handler(
         CommandHandler("team", team_search)
     )
 
-    app.add_handler(
+    application.add_handler(
         CommandHandler("fixtures", fixtures)
     )
 
-    app.add_handler(
+    application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             handle_message
@@ -455,7 +412,7 @@ def main():
         f"GoalLogic AI is running on port {PORT}."
     )
 
-    app.run_polling()
+    application.run_polling()
 
 
 if __name__ == "__main__":
