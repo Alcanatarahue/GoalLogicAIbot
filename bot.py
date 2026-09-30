@@ -47,7 +47,31 @@ def start_health_server():
 # Telegram /start
 # -------------------------
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    headers = {
+        "x-apisports-key": FOOTBALL_API_KEY
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+
+            response = await client.get(
+                f"{API_BASE}/status",
+                headers=headers
+            )
+
+            await update.message.reply_text(
+                f"🔧 FOOTBALL API TEST\n\n"
+                f"HTTP Status: {response.status_code}\n\n"
+                f"Response:\n{response.text[:3000]}"
+            )
+
+    except Exception as e:
+
+        await update.message.reply_text(
+            f"❌ API test failed:\n{e}"
+        )
 
     await update.message.reply_text(
         "⚽ GoalLogic AI is online!\n\n"
