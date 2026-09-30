@@ -245,16 +245,16 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
             timezone.utc
         ).strftime("%Y-%m-%d")
 
-        # Get fixtures using date range
-        fixture_response = await api_get(
-            "fixtures",
-            {
-                "team": team_id,
-                "from": from_date,
-                "to": to_date
-            }
-        )
-
+        # Get fixtures using date 
+fixture_response = await api_get(
+    "fixtures",
+    {
+        "team": team_id,
+        "season": 2026,
+        "from": from_date,
+        "to": to_date
+    }
+)
         fixture_data = fixture_response.json()
 
         if fixture_data.get("errors"):
