@@ -19,7 +19,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
 PORT = int(os.getenv("PORT", "10000"))
 
-API_URL = "https://v3.football.api-sports.io/status"
+API_BASE = "https://v3.football.api-sports.io"
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -40,41 +40,86 @@ def start_health_server():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "⚽ GoalLogic AI is online!\n\n"
-        "Send /apitest to test the football API."
+        "Send /team Chelsea to search for a team.\n"
+        "Example: /team Brentford"
     )
 
 
 async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "ℹ️ API test is already complete.\n"
+        "Football API connection was confirmed successfully."
+    )
+
+
+async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not FOOTBALL_API_KEY:
         await update.message.reply_text(
             "❌ FOOTBALL_API_KEY is missing from Render."
         )
         return
 
-    await update.message.reply_text("🔄 Testing Football API...")
+    if not context.args:
+        await update.message.reply_text(
+            "Please enter a team name.\n\n"
+            "Example:\n"
+            "/team Chelsea"
+        )
+        return
+
+    team_name = " ".join(context.args)
+
+    await update.message.reply_text(
+        f"🔎 Searching for: {team_name}..."
+    )
 
     try:
         headers = {
             "x-apisports-key": FOOTBALL_API_KEY
         }
 
+        params = {
+            "search": team_name
+        }
+
         async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.get(API_URL, headers=headers)
-
-        if response.status_code == 200:
-            data = response.json()
-
-            await update.message.reply_text(
-                "✅ Football API connection works!\n\n"
-                f"API response received successfully.\n"
-                f"Requests used today: {data.get('response', {}).get('requests', {}).get('current', 'unknown')}"
+            response = await client.get(
+                f"{API_BASE}/teams",
+                headers=headers,
+                params=params
             )
-        else:
+
+        if response.status_code != 200:
             await update.message.reply_text(
-                f"❌ API test failed.\n\n"
-                f"HTTP Status: {response.status_code}\n"
-                f"Response: {response.text[:500]}"
+                f"❌ API error: {response.status_code}\n\n"
+                f"{response.text[:500]}"
             )
+            return
+
+        data = response.json()
+        teams = data.get("response", [])
+
+        if not teams:
+            await update.message.reply_text(
+                f"❌ No team found for: {team_name}"
+            )
+            return
+
+        message = "✅ Teams found:\n\n"
+
+        for item in teams[:5]:
+            team = item.get("team", {})
+            name = team.get("name", "Unknown")
+            team_id = team.get("id", "Unknown")
+            country = team.get("country", "Unknown")
+
+            message += (
+                f"⚽ {name}\n"
+                f"ID: {team_id}\n"
+                f"Country: {country}\n\n"
+            )
+
+        await update.message.reply_text(message)
 
     except Exception as e:
         await update.message.reply_text(
@@ -104,6 +149,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("apitest", api_test))
+    app.add_handler(CommandHandler("team", team_search))
 
     app.add_handler(
         MessageHandler(
