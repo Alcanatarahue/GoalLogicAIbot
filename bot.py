@@ -40,15 +40,17 @@ def start_health_server():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "⚽ GoalLogic AI is online!\n\n"
-        "Send /team Chelsea to search for a team.\n"
-        "Example: /team Brentford"
+        "Commands:\n"
+        "/team Chelsea - Search for a team\n"
+        "/fixtures Chelsea - Show next fixtures\n"
+        "/apitest - Check API status"
     )
 
 
 async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "ℹ️ API test is already complete.\n"
-        "Football API connection was confirmed successfully."
+        "ℹ️ API test was already completed successfully.\n"
+        "Football API connection is working."
     )
 
 
@@ -96,8 +98,7 @@ async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        data = response.json()
-        teams = data.get("response", [])
+        teams = response.json().get("response", [])
 
         if not teams:
             await update.message.reply_text(
@@ -109,6 +110,7 @@ async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for item in teams[:5]:
             team = item.get("team", {})
+
             name = team.get("name", "Unknown")
             team_id = team.get("id", "Unknown")
             country = team.get("country", "Unknown")
@@ -125,6 +127,7 @@ async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"❌ Connection error:\n{str(e)[:500]}"
         )
+
 
 async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not FOOTBALL_API_KEY:
@@ -157,6 +160,7 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         async with httpx.AsyncClient(timeout=15) as client:
+
             team_response = await client.get(
                 f"{API_BASE}/teams",
                 headers=headers,
@@ -165,7 +169,8 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if team_response.status_code != 200:
                 await update.message.reply_text(
-                    f"❌ API error: {team_response.status_code}"
+                    f"❌ Team search error: "
+                    f"{team_response.status_code}"
                 )
                 return
 
@@ -192,11 +197,15 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if fixture_response.status_code != 200:
                 await update.message.reply_text(
-                    f"❌ Fixture API error: {fixture_response.status_code}"
+                    f"❌ Fixture API error: "
+                    f"{fixture_response.status_code}\n\n"
+                    f"{fixture_response.text[:500]}"
                 )
                 return
 
-            fixtures_data = fixture_response.json().get("response", [])
+            fixtures_data = fixture_response.json().get(
+                "response", []
+            )
 
         if not fixtures_data:
             await update.message.reply_text(
@@ -207,12 +216,20 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = f"📅 Next fixtures for {team_name}:\n\n"
 
         for item in fixtures_data:
-            fixture = item["fixture"]
-            teams_data = item["teams"]
+            fixture = item.get("fixture", {})
+            teams_data = item.get("teams", {})
 
-            home = teams_data["home"]["name"]
-            away = teams_data["away"]["name"]
-            date = fixture["date"]
+            home = teams_data.get(
+                "home", {}
+            ).get("name", "Unknown")
+
+            away = teams_data.get(
+                "away", {}
+            ).get("name", "Unknown")
+
+            date = fixture.get(
+                "date", "Unknown"
+            )
 
             message += (
                 f"⚽ {home} vs {away}\n"
@@ -225,7 +242,12 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"❌ Error:\n{str(e)[:500]}"
         )
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+
+async def handle_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     match = update.message.text
 
     await update.message.reply_text(
@@ -236,19 +258,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not TELEGRAM_BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is missing.")
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN is missing."
+        )
+
+    if not FOOTBALL_API_KEY:
+        raise RuntimeError(
+            "FOOTBALL_API_KEY is missing."
+        )
 
     threading.Thread(
         target=start_health_server,
         daemon=True
     ).start()
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(
+        TELEGRAM_BOT_TOKEN
+    ).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("apitest", api_test))
-    app.add_handler(CommandHandler("team", team_search))
-app.add_handler(CommandHandler("fixtures", fixtures))
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        CommandHandler("apitest", api_test)
+    )
+
+    app.add_handler(
+        CommandHandler("team", team_search)
+    )
+
+    app.add_handler(
+        CommandHandler("fixtures", fixtures)
+    )
+
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -256,7 +299,9 @@ app.add_handler(CommandHandler("fixtures", fixtures))
         )
     )
 
-    print(f"GoalLogic AI is running on port {PORT}.")
+    print(
+        f"GoalLogic AI is running on port {PORT}."
+    )
 
     app.run_polling()
 
