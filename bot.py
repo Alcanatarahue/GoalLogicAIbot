@@ -185,9 +185,11 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
             team_id = teams[0]["team"]["id"]
 
             fixture_params = {
-                "team": team_id,
-                "next": 10
-            }
+    "team": team_id,
+    "league": 39,
+    "season": 2026,
+    "next": 10
+}
 
             fixture_response = await client.get(
                 f"{API_BASE}/fixtures",
