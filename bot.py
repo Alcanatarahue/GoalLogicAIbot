@@ -20,7 +20,7 @@ PORT = int(os.getenv("PORT", "10000"))
 
 API_BASE = "https://v3.football.api-sports.io"
 
-# Your current free API plan allows seasons 2022-2024.
+# Current free API plan allows seasons 2022-2024
 FIXTURE_SEASON = 2024
 
 
@@ -31,11 +31,14 @@ FIXTURE_SEASON = 2024
 class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+
         self.send_response(200)
+
         self.send_header(
             "Content-Type",
             "text/plain"
         )
+
         self.end_headers()
 
         self.wfile.write(
@@ -57,7 +60,7 @@ def start_health_server():
 
 
 # ==================================================
-# FOOTBALL API REQUEST
+# FOOTBALL API
 # ==================================================
 
 async def api_get(endpoint, params=None):
@@ -97,10 +100,7 @@ async def start(
         "/team Chelsea\n"
         "/fixtures Chelsea\n"
         "/analyze Chelsea vs Arsenal\n"
-        "/apitest\n\n"
-
-        "You can also send:\n"
-        "Chelsea vs Arsenal"
+        "/apitest"
     )
 
 
@@ -120,113 +120,14 @@ async def api_test(
         await update.message.reply_text(
 
             "🔧 FOOTBALL API TEST\n\n"
-
-            f"HTTP Status: "
-            f"{response.status_code}\n\n"
-
-            f"Response:\n"
-            f"{response.text[:2500]}"
+            f"HTTP Status: {response.status_code}\n\n"
+            f"Response:\n{response.text[:2500]}"
         )
 
     except Exception as e:
 
         await update.message.reply_text(
             f"❌ API test failed:\n{e}"
-        )
-
-
-# ==================================================
-# TEAM SEARCH
-# ==================================================
-
-async def team_search(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if not context.args:
-
-        await update.message.reply_text(
-            "Use:\n/team Chelsea"
-        )
-
-        return
-
-    team_name = " ".join(context.args)
-
-    try:
-
-        response = await api_get(
-            "teams",
-            {
-                "search": team_name
-            }
-        )
-
-        data = response.json()
-
-        if data.get("errors"):
-
-            await update.message.reply_text(
-                f"❌ API error:\n"
-                f"{data['errors']}"
-            )
-
-            return
-
-        teams = data.get(
-            "response",
-            []
-        )
-
-        if not teams:
-
-            await update.message.reply_text(
-                f"❌ No team found for "
-                f"{team_name}"
-            )
-
-            return
-
-        reply = (
-            f"🔎 Teams matching "
-            f"'{team_name}':\n\n"
-        )
-
-        for item in teams[:10]:
-
-            team = item.get(
-                "team",
-                {}
-            )
-
-            name = team.get(
-                "name",
-                "Unknown"
-            )
-
-            team_id = team.get(
-                "id",
-                "Unknown"
-            )
-
-            country = team.get(
-                "country",
-                "Unknown"
-            )
-
-            reply += (
-                f"⚽ {name}\n"
-                f"ID: {team_id}\n"
-                f"Country: {country}\n\n"
-            )
-
-        await update.message.reply_text(reply)
-
-    except Exception as e:
-
-        await update.message.reply_text(
-            f"⚠️ Error searching team:\n{e}"
         )
 
 
@@ -280,6 +181,84 @@ async def find_team(team_name):
 
 
 # ==================================================
+# TEAM SEARCH
+# ==================================================
+
+async def team_search(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not context.args:
+
+        await update.message.reply_text(
+            "Use:\n/team Chelsea"
+        )
+
+        return
+
+    team_name = " ".join(context.args)
+
+    try:
+
+        response = await api_get(
+            "teams",
+            {
+                "search": team_name
+            }
+        )
+
+        data = response.json()
+
+        if data.get("errors"):
+
+            await update.message.reply_text(
+                f"❌ API error:\n{data['errors']}"
+            )
+
+            return
+
+        teams = data.get(
+            "response",
+            []
+        )
+
+        if not teams:
+
+            await update.message.reply_text(
+                f"❌ No team found for {team_name}"
+            )
+
+            return
+
+        reply = (
+            f"🔎 Teams matching "
+            f"'{team_name}':\n\n"
+        )
+
+        for item in teams[:10]:
+
+            team = item.get(
+                "team",
+                {}
+            )
+
+            reply += (
+                f"⚽ {team.get('name', 'Unknown')}\n"
+                f"ID: {team.get('id', 'Unknown')}\n"
+                f"Country: {team.get('country', 'Unknown')}\n\n"
+            )
+
+        await update.message.reply_text(reply)
+
+    except Exception as e:
+
+        await update.message.reply_text(
+            f"⚠️ Error searching team:\n{e}"
+        )
+
+
+# ==================================================
 # FIXTURES
 # ==================================================
 
@@ -300,9 +279,7 @@ async def fixtures(
 
     try:
 
-        team, error = await find_team(
-            team_name
-        )
+        team, error = await find_team(team_name)
 
         if error:
 
@@ -313,12 +290,13 @@ async def fixtures(
             return
 
         team_id = team.get("id")
+
         official_name = team.get(
             "name",
             team_name
         )
 
-        fixture_response = await api_get(
+        response = await api_get(
             "fixtures",
             {
                 "team": team_id,
@@ -326,23 +304,18 @@ async def fixtures(
             }
         )
 
-        fixture_data = fixture_response.json()
+        data = response.json()
 
-        if fixture_data.get("errors"):
+        if data.get("errors"):
 
             await update.message.reply_text(
-
-                "❌ Fixture API error:\n\n"
-
-                f"{fixture_data['errors']}\n\n"
-
-                f"Team: {official_name}\n"
-                f"Season: {FIXTURE_SEASON}"
+                f"❌ Fixture API error:\n"
+                f"{data['errors']}"
             )
 
             return
 
-        matches = fixture_data.get(
+        matches = data.get(
             "response",
             []
         )
@@ -350,11 +323,7 @@ async def fixtures(
         if not matches:
 
             await update.message.reply_text(
-
-                "ℹ️ No fixtures returned.\n\n"
-
-                f"Team: {official_name}\n"
-                f"Season: {FIXTURE_SEASON}"
+                "ℹ️ No fixtures returned."
             )
 
             return
@@ -397,11 +366,6 @@ async def fixtures(
                 "Unknown"
             )
 
-            league_name = league.get(
-                "name",
-                "Unknown competition"
-            )
-
             date_string = fixture.get(
                 "date",
                 ""
@@ -433,7 +397,7 @@ async def fixtures(
             reply += (
                 f"📅 {date_display}\n"
                 f"⚽ {home} vs {away}\n"
-                f"🏆 {league_name}\n\n"
+                f"🏆 {league.get('name', 'Unknown')}\n\n"
             )
 
         reply += (
@@ -451,7 +415,139 @@ async def fixtures(
 
 
 # ==================================================
-# ANALYZE MATCH
+# CALCULATE TEAM GOAL STATISTICS
+# ==================================================
+
+def calculate_goal_stats(matches, team_id):
+
+    matches = matches[-5:]
+
+    played = 0
+    wins = 0
+    draws = 0
+    losses = 0
+
+    goals_for = 0
+    goals_against = 0
+
+    over_1_5 = 0
+    over_2_5 = 0
+    btts = 0
+
+    for match in matches:
+
+        teams_info = match.get(
+            "teams",
+            {}
+        )
+
+        score = match.get(
+            "goals",
+            {}
+        )
+
+        home_score = score.get("home")
+        away_score = score.get("away")
+
+        if home_score is None or away_score is None:
+            continue
+
+        home_team_id = teams_info.get(
+            "home",
+            {}
+        ).get("id")
+
+        away_team_id = teams_info.get(
+            "away",
+            {}
+        ).get("id")
+
+        if team_id == home_team_id:
+
+            team_goals = home_score
+            opponent_goals = away_score
+
+        elif team_id == away_team_id:
+
+            team_goals = away_score
+            opponent_goals = home_score
+
+        else:
+
+            continue
+
+        played += 1
+
+        goals_for += team_goals
+        goals_against += opponent_goals
+
+        if team_goals > opponent_goals:
+
+            wins += 1
+
+        elif team_goals == opponent_goals:
+
+            draws += 1
+
+        else:
+
+            losses += 1
+
+        total_goals = (
+            team_goals + opponent_goals
+        )
+
+        if total_goals >= 2:
+            over_1_5 += 1
+
+        if total_goals >= 3:
+            over_2_5 += 1
+
+        if team_goals >= 1 and opponent_goals >= 1:
+            btts += 1
+
+    if played > 0:
+
+        avg_for = goals_for / played
+        avg_against = goals_against / played
+
+        over_1_5_pct = (
+            over_1_5 / played
+        ) * 100
+
+        over_2_5_pct = (
+            over_2_5 / played
+        ) * 100
+
+        btts_pct = (
+            btts / played
+        ) * 100
+
+    else:
+
+        avg_for = 0
+        avg_against = 0
+        over_1_5_pct = 0
+        over_2_5_pct = 0
+        btts_pct = 0
+
+    return {
+        "played": played,
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "goals_for": goals_for,
+        "goals_against": goals_against,
+        "avg_for": avg_for,
+        "avg_against": avg_against,
+        "over_1_5": over_1_5_pct,
+        "over_2_5": over_2_5_pct,
+        "btts": btts_pct,
+    }
+
+
+# ==================================================
+# ANALYZE
 # ==================================================
 
 async def analyze(
@@ -462,8 +558,7 @@ async def analyze(
     if len(context.args) < 3:
 
         await update.message.reply_text(
-
-            "Use this format:\n\n"
+            "Use:\n\n"
             "/analyze Chelsea vs Arsenal"
         )
 
@@ -476,8 +571,7 @@ async def analyze(
     if len(parts) != 2:
 
         await update.message.reply_text(
-
-            "❌ Please use this format:\n\n"
+            "❌ Use:\n\n"
             "/analyze Chelsea vs Arsenal"
         )
 
@@ -492,7 +586,7 @@ async def analyze(
             "🔎 Analyzing match...\n\n"
             f"⚽ {home_name.title()} vs "
             f"{away_name.title()}\n\n"
-            "Please wait..."
+            "Collecting statistics..."
         )
 
         home_team, home_error = await find_team(
@@ -532,8 +626,6 @@ async def analyze(
             away_name
         )
 
-        # Get historical fixtures for both teams
-
         home_response = await api_get(
             "fixtures",
             {
@@ -553,6 +645,22 @@ async def analyze(
         home_data = home_response.json()
         away_data = away_response.json()
 
+        if home_data.get("errors"):
+
+            await update.message.reply_text(
+                f"❌ {home_data['errors']}"
+            )
+
+            return
+
+        if away_data.get("errors"):
+
+            await update.message.reply_text(
+                f"❌ {away_data['errors']}"
+            )
+
+            return
+
         home_matches = home_data.get(
             "response",
             []
@@ -563,122 +671,15 @@ async def analyze(
             []
         )
 
-        # Recent results
+        home_stats = calculate_goal_stats(
+            home_matches,
+            home_id
+        )
 
-        home_recent = home_matches[-5:]
-        away_recent = away_matches[-5:]
-
-        home_wins = 0
-        home_draws = 0
-        home_losses = 0
-
-        for match in home_recent:
-
-            teams_info = match.get(
-                "teams",
-                {}
-            )
-
-            score = match.get(
-                "goals",
-                {}
-            )
-
-            home_score = score.get(
-                "home"
-            )
-
-            away_score = score.get(
-                "away"
-            )
-
-            if home_score is None or away_score is None:
-                continue
-
-            team_is_home = (
-                teams_info.get(
-                    "home",
-                    {}
-                ).get("id") == home_id
-            )
-
-            if team_is_home:
-
-                if home_score > away_score:
-                    home_wins += 1
-
-                elif home_score == away_score:
-                    home_draws += 1
-
-                else:
-                    home_losses += 1
-
-            else:
-
-                if away_score > home_score:
-                    home_wins += 1
-
-                elif away_score == home_score:
-                    home_draws += 1
-
-                else:
-                    home_losses += 1
-
-        away_wins = 0
-        away_draws = 0
-        away_losses = 0
-
-        for match in away_recent:
-
-            teams_info = match.get(
-                "teams",
-                {}
-            )
-
-            score = match.get(
-                "goals",
-                {}
-            )
-
-            home_score = score.get(
-                "home"
-            )
-
-            away_score = score.get(
-                "away"
-            )
-
-            if home_score is None or away_score is None:
-                continue
-
-            team_is_home = (
-                teams_info.get(
-                    "home",
-                    {}
-                ).get("id") == away_id
-            )
-
-            if team_is_home:
-
-                if home_score > away_score:
-                    away_wins += 1
-
-                elif home_score == away_score:
-                    away_draws += 1
-
-                else:
-                    away_losses += 1
-
-            else:
-
-                if away_score > home_score:
-                    away_wins += 1
-
-                elif away_score == home_score:
-                    away_draws += 1
-
-                else:
-                    away_losses += 1
+        away_stats = calculate_goal_stats(
+            away_matches,
+            away_id
+        )
 
         reply = (
 
@@ -688,33 +689,86 @@ async def analyze(
             f"{away_official}\n\n"
 
             f"📊 DATA PERIOD\n"
-            f"Season: {FIXTURE_SEASON}\n\n"
+            f"Season: {FIXTURE_SEASON}\n"
+            f"Sample: Last 5 available fixtures\n\n"
 
-            f"🏠 {home_official} - Recent 5\n"
-            f"✅ Wins: {home_wins}\n"
-            f"🤝 Draws: {home_draws}\n"
-            f"❌ Losses: {home_losses}\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"🏠 {home_official}\n"
+            "━━━━━━━━━━━━━━━━━━\n"
 
-            f"✈️ {away_official} - Recent 5\n"
-            f"✅ Wins: {away_wins}\n"
-            f"🤝 Draws: {away_draws}\n"
-            f"❌ Losses: {away_losses}\n\n"
+            f"Games: {home_stats['played']}\n"
+            f"✅ Wins: {home_stats['wins']}\n"
+            f"🤝 Draws: {home_stats['draws']}\n"
+            f"❌ Losses: {home_stats['losses']}\n\n"
 
-            "📈 INITIAL ASSESSMENT\n"
-            "The statistics above are based on "
-            "historical 2024 fixtures available "
-            "through your current API plan.\n\n"
+            f"⚽ Goals scored: "
+            f"{home_stats['goals_for']}\n"
 
-            "⚠️ IMPORTANT\n"
-            "This is statistical analysis, not a "
-            "guaranteed prediction. Current 2026 "
-            "data is not available through the "
-            "current free API plan.\n\n"
+            f"🥅 Goals conceded: "
+            f"{home_stats['goals_against']}\n"
 
-            "🔧 NEXT STAGE\n"
-            "We will add goals, shots, home/away "
-            "records, head-to-head and betting "
-            "market analysis."
+            f"📈 Avg scored: "
+            f"{home_stats['avg_for']:.2f}\n"
+
+            f"📉 Avg conceded: "
+            f"{home_stats['avg_against']:.2f}\n\n"
+
+            f"🔥 Over 1.5: "
+            f"{home_stats['over_1_5']:.0f}%\n"
+
+            f"🔥 Over 2.5: "
+            f"{home_stats['over_2_5']:.0f}%\n"
+
+            f"🎯 BTTS: "
+            f"{home_stats['btts']:.0f}%\n\n"
+
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"✈️ {away_official}\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+
+            f"Games: {away_stats['played']}\n"
+            f"✅ Wins: {away_stats['wins']}\n"
+            f"🤝 Draws: {away_stats['draws']}\n"
+            f"❌ Losses: {away_stats['losses']}\n\n"
+
+            f"⚽ Goals scored: "
+            f"{away_stats['goals_for']}\n"
+
+            f"🥅 Goals conceded: "
+            f"{away_stats['goals_against']}\n"
+
+            f"📈 Avg scored: "
+            f"{away_stats['avg_for']:.2f}\n"
+
+            f"📉 Avg conceded: "
+            f"{away_stats['avg_against']:.2f}\n\n"
+
+            f"🔥 Over 1.5: "
+            f"{away_stats['over_1_5']:.0f}%\n"
+
+            f"🔥 Over 2.5: "
+            f"{away_stats['over_2_5']:.0f}%\n"
+
+            f"🎯 BTTS: "
+            f"{away_stats['btts']:.0f}%\n\n"
+
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📊 GOALLOGIC SUMMARY\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+
+            f"⚽ Combined avg goals: "
+            f"{home_stats['avg_for'] + away_stats['avg_for']:.2f}\n\n"
+
+            "⚠️ LIMITATION\n"
+            "These figures use historical 2024 "
+            "fixtures available on the current "
+            "API plan. They are not current 2026 "
+            "statistics and should not be treated "
+            "as guaranteed predictions.\n\n"
+
+            "🔧 NEXT UPGRADE\n"
+            "Shots • Home/Away • H2H • Corners • "
+            "Cards • Betting-market analysis"
         )
 
         await update.message.reply_text(
@@ -724,9 +778,7 @@ async def analyze(
     except Exception as e:
 
         await update.message.reply_text(
-
-            "⚠️ Analysis error:\n\n"
-            f"{e}"
+            f"⚠️ Analysis error:\n\n{e}"
         )
 
 
@@ -744,24 +796,16 @@ async def handle_message(
     if " vs " in message.lower():
 
         await update.message.reply_text(
-
             "⚽ Match received!\n\n"
-
             f"{message}\n\n"
-
-            "Use:\n"
-            f"/analyze {message}"
+            f"Use:\n/analyze {message}"
         )
 
     else:
 
         await update.message.reply_text(
-
-            "⚽ GoalLogic AI received "
-            "your message.\n\n"
-
+            "⚽ GoalLogic AI received your message.\n\n"
             "Try:\n\n"
-
             "/team Chelsea\n"
             "/fixtures Chelsea\n"
             "/analyze Chelsea vs Arsenal\n"
