@@ -177,18 +177,15 @@ async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
-
         await update.message.reply_text(
             "Use:\n/fixtures Chelsea"
         )
-
         return
 
     team_name = " ".join(context.args)
 
     try:
-
-        # Find team
+        # Find the team
         team_response = await api_get(
             "teams",
             {"search": team_name}
@@ -197,28 +194,23 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         team_data = team_response.json()
 
         if team_data.get("errors"):
-
             await update.message.reply_text(
                 f"❌ Team search error:\n{team_data['errors']}"
             )
-
             return
 
         teams = team_data.get("response", [])
 
         if not teams:
-
             await update.message.reply_text(
                 f"❌ Team not found: {team_name}"
             )
-
             return
 
-        # Prefer an exact team-name match
+        # Prefer exact team name
         selected_team = None
 
         for item in teams:
-
             name = item.get("team", {}).get("name", "")
 
             if name.lower() == team_name.lower():
@@ -233,41 +225,56 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         team_id = team.get("id")
         official_name = team.get("name", team_name)
 
-        # Get next 10 fixtures
+        # Current date
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # 30-day date range
+        from_date = today
+
+        future_date = datetime.now(timezone.utc).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0
+        )
+
+        future_date = future_date.timestamp() + (30 * 24 * 60 * 60)
+
+        to_date = datetime.fromtimestamp(
+            future_date,
+            timezone.utc
+        ).strftime("%Y-%m-%d")
+
+        # Get fixtures using date range
         fixture_response = await api_get(
             "fixtures",
             {
                 "team": team_id,
-                "next": 10
+                "from": from_date,
+                "to": to_date
             }
         )
 
         fixture_data = fixture_response.json()
 
         if fixture_data.get("errors"):
-
             await update.message.reply_text(
                 f"❌ Fixture API error:\n{fixture_data['errors']}"
             )
-
             return
 
         matches = fixture_data.get("response", [])
 
         if not matches:
-
             await update.message.reply_text(
-                "ℹ️ The API returned no upcoming fixtures.\n\n"
-                f"Team: {official_name}\n"
-                f"Team ID: {team_id}\n"
-                f"API results: {fixture_data.get('results', 0)}\n\n"
-                "Try /apitest to check the API connection."
+                f"ℹ️ No fixtures found for {official_name} "
+                f"between {from_date} and {to_date}."
             )
-
             return
 
         reply = (
-            f"📅 Upcoming fixtures for {official_name}\n\n"
+            f"📅 Fixtures for {official_name}\n"
+            f"🗓️ {from_date} → {to_date}\n\n"
         )
 
         for match in matches:
@@ -287,9 +294,7 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
             date_string = fixture.get("date")
 
             if date_string:
-
                 try:
-
                     date_object = datetime.fromisoformat(
                         date_string.replace("Z", "+00:00")
                     )
@@ -299,11 +304,8 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
                 except Exception:
-
                     date_display = date_string
-
             else:
-
                 date_display = "Date unavailable"
 
             league_name = league.get(
