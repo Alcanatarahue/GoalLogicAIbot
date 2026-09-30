@@ -186,7 +186,7 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             fixture_params = {
                 "team": team_id,
-                "next": 5
+                "next": 10
             }
 
             fixture_response = await client.get(
