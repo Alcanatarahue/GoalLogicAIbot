@@ -31,12 +31,10 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
 
         self.send_response(200)
-
         self.send_header(
             "Content-Type",
             "text/plain"
         )
-
         self.end_headers()
 
         self.wfile.write(
@@ -276,10 +274,22 @@ async def get_team_fixtures(team_id):
 
         return [], data.get("errors")
 
-    return data.get(
+    matches = data.get(
         "response",
         []
-    ), None
+    )
+
+    matches.sort(
+        key=lambda x: x.get(
+            "fixture",
+            {}
+        ).get(
+            "date",
+            ""
+        )
+    )
+
+    return matches, None
 
 
 # ==================================================
@@ -384,7 +394,7 @@ async def fixtures(
 
 
 # ==================================================
-# CALCULATE STATISTICS
+# CALCULATE GOAL STATISTICS
 # ==================================================
 
 def calculate_stats(
@@ -516,23 +526,17 @@ def filter_home_matches(
     team_id
 ):
 
-    result = []
-
-    for match in matches:
-
-        home_id = match.get(
+    return [
+        match
+        for match in matches
+        if match.get(
             "teams",
             {}
         ).get(
             "home",
             {}
-        ).get("id")
-
-        if home_id == team_id:
-
-            result.append(match)
-
-    return result
+        ).get("id") == team_id
+    ]
 
 
 def filter_away_matches(
@@ -540,69 +544,45 @@ def filter_away_matches(
     team_id
 ):
 
-    result = []
-
-    for match in matches:
-
-        away_id = match.get(
+    return [
+        match
+        for match in matches
+        if match.get(
             "teams",
             {}
         ).get(
             "away",
             {}
-        ).get("id")
-
-        if away_id == team_id:
-
-            result.append(match)
-
-    return result
+        ).get("id") == team_id
+    ]
 
 
 # ==================================================
-# HEAD TO HEAD
+# H2H
 # ==================================================
 
-def find_h2h(
-    home_matches,
+async def get_h2h(
     home_id,
     away_id
 ):
 
-    h2h = []
+    response = await api_get(
+        "fixtures/headtohead",
+        {
+            "h2h": f"{home_id}-{away_id}",
+            "last": 5
+        }
+    )
 
-    for match in home_matches:
+    data = response.json()
 
-        teams = match.get(
-            "teams",
-            {}
-        )
+    if data.get("errors"):
+        return [], data.get("errors")
 
-        home_team_id = teams.get(
-            "home",
-            {}
-        ).get("id")
-
-        away_team_id = teams.get(
-            "away",
-            {}
-        ).get("id")
-
-        if (
-            (
-                home_team_id == home_id
-                and away_team_id == away_id
-            )
-            or
-            (
-                home_team_id == away_id
-                and away_team_id == home_id
-            )
-        ):
-
-            h2h.append(match)
-
-    return h2h
+    return data.get(
+        "response",
+        []
+    ), None
 
 
 def calculate_h2h_stats(
@@ -620,6 +600,8 @@ def calculate_h2h_stats(
 
     over_2_5 = 0
     btts = 0
+
+    total = 0
 
     for match in matches:
 
@@ -659,6 +641,8 @@ def calculate_h2h_stats(
             home_team_goals = away_goals
             away_team_goals = home_goals
 
+        total += 1
+
         goals_home += home_team_goals
         goals_away += away_team_goals
 
@@ -680,8 +664,6 @@ def calculate_h2h_stats(
         ):
             btts += 1
 
-    total = len(matches)
-
     if total:
 
         over_2_5_pct = over_2_5 / total * 100
@@ -702,6 +684,182 @@ def calculate_h2h_stats(
         "over_2_5": over_2_5_pct,
         "btts": btts_pct,
     }
+
+
+# ==================================================
+# MATCH STATISTICS
+# ==================================================
+
+def get_stat_value(
+    statistics,
+    stat_name
+):
+
+    for item in statistics:
+
+        if item.get("type") == stat_name:
+
+            value = item.get("value")
+
+            if value is None:
+                return None
+
+            if isinstance(value, str):
+
+                value = value.replace(
+                    "%",
+                    ""
+                )
+
+            try:
+                return float(value)
+            except:
+                return None
+
+    return None
+
+
+async def get_fixture_statistics(
+    fixture_id
+):
+
+    response = await api_get(
+        "fixtures/statistics",
+        {
+            "fixture": fixture_id
+        }
+    )
+
+    data = response.json()
+
+    if data.get("errors"):
+        return [], data.get("errors")
+
+    return data.get(
+        "response",
+        []
+    ), None
+
+
+def calculate_match_statistics(
+    matches,
+    team_id,
+    limit=5
+):
+
+    matches = matches[-limit:]
+
+    totals = {
+        "shots": [],
+        "shots_on_target": [],
+        "corners": [],
+        "yellow_cards": [],
+    }
+
+    return totals
+
+
+async def collect_team_match_stats(
+    matches,
+    team_id,
+    limit=5
+):
+
+    selected = matches[-limit:]
+
+    result = {
+        "games": 0,
+        "shots": [],
+        "shots_on_target": [],
+        "corners": [],
+        "yellow_cards": [],
+    }
+
+    for match in selected:
+
+        fixture_id = match.get(
+            "fixture",
+            {}
+        ).get("id")
+
+        if not fixture_id:
+            continue
+
+        statistics, error = await get_fixture_statistics(
+            fixture_id
+        )
+
+        if error or not statistics:
+            continue
+
+        team_statistics = None
+
+        for block in statistics:
+
+            block_team_id = block.get(
+                "team",
+                {}
+            ).get("id")
+
+            if block_team_id == team_id:
+
+                team_statistics = block.get(
+                    "statistics",
+                    []
+                )
+
+                break
+
+        if not team_statistics:
+            continue
+
+        shots = get_stat_value(
+            team_statistics,
+            "Total Shots"
+        )
+
+        shots_on_target = get_stat_value(
+            team_statistics,
+            "Shots on Goal"
+        )
+
+        corners = get_stat_value(
+            team_statistics,
+            "Corner Kicks"
+        )
+
+        yellow_cards = get_stat_value(
+            team_statistics,
+            "Yellow Cards"
+        )
+
+        if shots is not None:
+            result["shots"].append(shots)
+
+        if shots_on_target is not None:
+            result["shots_on_target"].append(
+                shots_on_target
+            )
+
+        if corners is not None:
+            result["corners"].append(corners)
+
+        if yellow_cards is not None:
+            result["yellow_cards"].append(
+                yellow_cards
+            )
+
+        result["games"] += 1
+
+    return result
+
+
+def average(values):
+
+    if not values:
+        return None
+
+    return sum(values) / len(values)
 
 
 # ==================================================
@@ -744,7 +902,8 @@ async def analyze(
             "🔎 Analyzing match...\n\n"
             f"⚽ {home_name.title()} vs "
             f"{away_name.title()}\n\n"
-            "Collecting form, home/away and H2H data..."
+            "Collecting form, home/away, H2H "
+            "and match statistics..."
         )
 
         home_team, home_error = await find_team(
@@ -808,9 +967,9 @@ async def analyze(
 
             return
 
-        # ------------------------------------------
-        # RECENT FORM
-        # ------------------------------------------
+        # ==========================================
+        # GOAL FORM
+        # ==========================================
 
         home_stats = calculate_stats(
             home_matches,
@@ -824,9 +983,9 @@ async def analyze(
             5
         )
 
-        # ------------------------------------------
+        # ==========================================
         # HOME / AWAY
-        # ------------------------------------------
+        # ==========================================
 
         home_home_matches = filter_home_matches(
             home_matches,
@@ -850,23 +1009,75 @@ async def analyze(
             5
         )
 
-        # ------------------------------------------
+        # ==========================================
         # H2H
-        # ------------------------------------------
+        # ==========================================
 
-        h2h_matches = find_h2h(
-            home_matches,
+        h2h_matches, h2h_error = await get_h2h(
             home_id,
             away_id
         )
 
-        h2h_matches = h2h_matches[-5:]
+        if h2h_error:
+            h2h_matches = []
 
         h2h_stats = calculate_h2h_stats(
             h2h_matches,
             home_id,
             away_id
         )
+
+        # ==========================================
+        # MATCH STATISTICS
+        # ==========================================
+
+        home_match_stats = await collect_team_match_stats(
+            home_matches,
+            home_id,
+            5
+        )
+
+        away_match_stats = await collect_team_match_stats(
+            away_matches,
+            away_id,
+            5
+        )
+
+        home_shots = average(
+            home_match_stats["shots"]
+        )
+
+        away_shots = average(
+            away_match_stats["shots"]
+        )
+
+        home_sot = average(
+            home_match_stats["shots_on_target"]
+        )
+
+        away_sot = average(
+            away_match_stats["shots_on_target"]
+        )
+
+        home_corners = average(
+            home_match_stats["corners"]
+        )
+
+        away_corners = average(
+            away_match_stats["corners"]
+        )
+
+        home_cards = average(
+            home_match_stats["yellow_cards"]
+        )
+
+        away_cards = average(
+            away_match_stats["yellow_cards"]
+        )
+
+        # ==========================================
+        # BUILD REPORT
+        # ==========================================
 
         reply = (
 
@@ -926,6 +1137,77 @@ async def analyze(
             f"🎯 BTTS: {away_away_stats['btts']:.0f}%\n\n"
 
             "━━━━━━━━━━━━━━━━━━\n"
+            "🎯 MATCH STATISTICS\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+
+            f"🏠 {home_official}\n"
+            f"🎯 Avg shots: "
+            f"{home_shots:.2f}\n"
+            if home_shots is not None else
+            f"🏠 {home_official}\n"
+            f"🎯 Avg shots: N/A\n"
+        )
+
+        reply += (
+
+            f"🎯 Avg shots on target: "
+            f"{home_sot:.2f}\n"
+            if home_sot is not None else
+            "🎯 Avg shots on target: N/A\n"
+        )
+
+        reply += (
+
+            f"🚩 Avg corners: "
+            f"{home_corners:.2f}\n"
+            if home_corners is not None else
+            "🚩 Avg corners: N/A\n"
+        )
+
+        reply += (
+
+            f"🟨 Avg yellow cards: "
+            f"{home_cards:.2f}\n\n"
+            if home_cards is not None else
+            "🟨 Avg yellow cards: N/A\n\n"
+        )
+
+        reply += (
+
+            f"✈️ {away_official}\n"
+            f"🎯 Avg shots: "
+            f"{away_shots:.2f}\n"
+            if away_shots is not None else
+            f"✈️ {away_official}\n"
+            f"🎯 Avg shots: N/A\n"
+        )
+
+        reply += (
+
+            f"🎯 Avg shots on target: "
+            f"{away_sot:.2f}\n"
+            if away_sot is not None else
+            "🎯 Avg shots on target: N/A\n"
+        )
+
+        reply += (
+
+            f"🚩 Avg corners: "
+            f"{away_corners:.2f}\n"
+            if away_corners is not None else
+            "🚩 Avg corners: N/A\n"
+        )
+
+        reply += (
+
+            f"🟨 Avg yellow cards: "
+            f"{away_cards:.2f}\n\n"
+            if away_cards is not None else
+            "🟨 Avg yellow cards: N/A\n\n"
+        )
+
+        reply += (
+            "━━━━━━━━━━━━━━━━━━\n"
             "🤝 HEAD-TO-HEAD\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
         )
@@ -963,7 +1245,7 @@ async def analyze(
 
             reply += (
                 "No H2H meetings were found "
-                "inside the available 2024 data.\n\n"
+                "through the available API data.\n\n"
             )
 
         reply += (
@@ -975,23 +1257,31 @@ async def analyze(
             f"🏠 Home team: {home_official}\n"
             f"✈️ Away team: {away_official}\n\n"
 
-            "The analysis now combines recent "
-            "form, home/away performance and "
-            "available H2H information.\n\n"
+            "The report combines:\n"
+            "• Recent form\n"
+            "• Goals\n"
+            "• Over 2.5\n"
+            "• BTTS\n"
+            "• Home/Away form\n"
+            "• H2H\n"
+            "• Shots\n"
+            "• Shots on target\n"
+            "• Corners\n"
+            "• Yellow cards\n\n"
 
             "⚠️ DATA LIMITATION\n"
             "Your current API plan only provides "
-            "fixture seasons 2022-2024. Therefore "
-            "these are historical 2024 statistics, "
-            "not current 2026 statistics.\n\n"
+            "fixture seasons 2022-2024. These figures "
+            "therefore use historical 2024 data.\n\n"
+
+            "⚠️ STATISTICS NOTE\n"
+            "Some competitions do not provide every "
+            "match statistic. Missing statistics are "
+            "shown as N/A.\n\n"
 
             "⚠️ BETTING NOTE\n"
-            "Statistics describe past performance "
-            "and do not guarantee a future result.\n\n"
-
-            "🔧 NEXT UPGRADE\n"
-            "Shots • Shots on Target • Corners • "
-            "Cards • xG • Market analysis"
+            "Statistics describe past performance and "
+            "do not guarantee a future result."
         )
 
         await update.message.reply_text(
