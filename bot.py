@@ -51,7 +51,7 @@ async def api_get(endpoint, params=None):
         "x-apisports-key": FOOTBALL_API_KEY
     }
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
 
         response = await client.get(
             f"{API_BASE}/{endpoint}",
@@ -63,7 +63,7 @@ async def api_get(endpoint, params=None):
 
 
 # =========================
-# /START
+# START
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -74,13 +74,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/team Chelsea\n"
         "/fixtures Chelsea\n"
         "/apitest\n\n"
-        "You can also send a match such as:\n"
+        "You can also send:\n"
         "Chelsea vs Arsenal"
     )
 
 
 # =========================
-# /APITEST
+# API TEST
 # =========================
 
 async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,7 +103,7 @@ async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# /TEAM
+# TEAM SEARCH
 # =========================
 
 async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -171,21 +171,27 @@ async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# /FIXTURES
+# FIXTURES
 # =========================
 
 async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
+
         await update.message.reply_text(
             "Use:\n/fixtures Chelsea"
         )
+
         return
 
     team_name = " ".join(context.args)
 
     try:
-        # Find the team
+
+        # -------------------------
+        # FIND TEAM
+        # -------------------------
+
         team_response = await api_get(
             "teams",
             {"search": team_name}
@@ -194,123 +200,250 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
         team_data = team_response.json()
 
         if team_data.get("errors"):
+
             await update.message.reply_text(
                 f"❌ Team search error:\n{team_data['errors']}"
             )
+
             return
 
         teams = team_data.get("response", [])
 
         if not teams:
+
             await update.message.reply_text(
                 f"❌ Team not found: {team_name}"
             )
+
             return
 
-        # Prefer exact team name
         selected_team = None
 
         for item in teams:
+
             name = item.get("team", {}).get("name", "")
 
             if name.lower() == team_name.lower():
+
                 selected_team = item
                 break
 
         if selected_team is None:
+
             selected_team = teams[0]
 
         team = selected_team.get("team", {})
 
         team_id = team.get("id")
-        official_name = team.get("name", team_name)
-
-        # Current date
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        # 30-day date range
-        from_date = today
-
-        future_date = datetime.now(timezone.utc).replace(
-            hour=0,
-            minute=0,
-            second=0,
-            microsecond=0
+        official_name = team.get(
+            "name",
+            team_name
         )
 
-        future_date = future_date.timestamp() + (30 * 24 * 60 * 60)
+        # -------------------------
+        # CURRENT SEASON
+        # -------------------------
 
-        to_date = datetime.fromtimestamp(
-            future_date,
+        current_year = datetime.now(
             timezone.utc
-        ).strftime("%Y-%m-%d")
+        ).year
 
-        # Get fixtures using date 
-fixture_response = await api_get(
-    "fixtures",
-    {
-        "team": team_id,
-        "season": 2026,
-        "from": from_date,
-        "to": to_date
-    }
-)
+        season = current_year
+
+        # -------------------------
+        # GET SEASON FIXTURES
+        #
+        # IMPORTANT:
+        # We deliberately DO NOT use
+        # the "next" parameter.
+        # -------------------------
+
+        fixture_response = await api_get(
+            "fixtures",
+            {
+                "team": team_id,
+                "season": season
+            }
+        )
+
         fixture_data = fixture_response.json()
 
         if fixture_data.get("errors"):
+
             await update.message.reply_text(
-                f"❌ Fixture API error:\n{fixture_data['errors']}"
+                "❌ Fixture API error:\n"
+                f"{fixture_data['errors']}\n\n"
+                f"Team: {official_name}\n"
+                f"Team ID: {team_id}\n"
+                f"Season: {season}"
             )
+
             return
 
-        matches = fixture_data.get("response", [])
+        matches = fixture_data.get(
+            "response",
+            []
+        )
+
+        # -------------------------
+        # IF CURRENT SEASON HAS
+        # NO DATA, TRY PREVIOUS
+        # -------------------------
 
         if not matches:
-            await update.message.reply_text(
-                f"ℹ️ No fixtures found for {official_name} "
-                f"between {from_date} and {to_date}."
+
+            previous_season = season - 1
+
+            previous_response = await api_get(
+                "fixtures",
+                {
+                    "team": team_id,
+                    "season": previous_season
+                }
             )
+
+            previous_data = previous_response.json()
+
+            if not previous_data.get("errors"):
+
+                previous_matches = previous_data.get(
+                    "response",
+                    []
+                )
+
+                if previous_matches:
+
+                    matches = previous_matches
+                    season = previous_season
+
+        # -------------------------
+        # NO RESULTS
+        # -------------------------
+
+        if not matches:
+
+            await update.message.reply_text(
+                "ℹ️ No fixtures were returned by "
+                "the Football API.\n\n"
+                f"Team: {official_name}\n"
+                f"Team ID: {team_id}\n"
+                f"Season checked: {season}\n\n"
+                "The API may not currently have "
+                "fixture data for this team/season."
+            )
+
             return
 
-        reply = (
-            f"📅 Fixtures for {official_name}\n"
-            f"🗓️ {from_date} → {to_date}\n\n"
-        )
+        # -------------------------
+        # GET FUTURE MATCHES
+        # -------------------------
+
+        now = datetime.now(timezone.utc)
+
+        upcoming = []
 
         for match in matches:
 
-            fixture = match.get("fixture", {})
-            teams_info = match.get("teams", {})
-            league = match.get("league", {})
-
-            home = teams_info.get("home", {}).get(
-                "name", "Unknown"
+            fixture = match.get(
+                "fixture",
+                {}
             )
 
-            away = teams_info.get("away", {}).get(
-                "name", "Unknown"
+            date_string = fixture.get(
+                "date"
             )
 
-            date_string = fixture.get("date")
+            if not date_string:
+                continue
 
-            if date_string:
-                try:
-                    date_object = datetime.fromisoformat(
-                        date_string.replace("Z", "+00:00")
+            try:
+
+                match_date = datetime.fromisoformat(
+                    date_string.replace(
+                        "Z",
+                        "+00:00"
                     )
+                )
 
-                    date_display = date_object.strftime(
-                        "%d %b %Y, %H:%M UTC"
+            except Exception:
+
+                continue
+
+            if match_date >= now:
+
+                upcoming.append(
+                    (
+                        match_date,
+                        match
                     )
+                )
 
-                except Exception:
-                    date_display = date_string
-            else:
-                date_display = "Date unavailable"
+        # Sort by date
+
+        upcoming.sort(
+            key=lambda x: x[0]
+        )
+
+        # Only show first 10
+
+        upcoming = upcoming[:10]
+
+        if not upcoming:
+
+            await update.message.reply_text(
+                f"ℹ️ No upcoming fixtures found "
+                f"for {official_name}.\n\n"
+                f"Season checked: {season}\n"
+                f"Total fixtures returned: "
+                f"{len(matches)}"
+            )
+
+            return
+
+        # -------------------------
+        # BUILD RESPONSE
+        # -------------------------
+
+        reply = (
+            f"📅 Upcoming fixtures\n"
+            f"⚽ {official_name}\n\n"
+        )
+
+        for match_date, match in upcoming:
+
+            teams_info = match.get(
+                "teams",
+                {}
+            )
+
+            league = match.get(
+                "league",
+                {}
+            )
+
+            home = teams_info.get(
+                "home",
+                {}
+            ).get(
+                "name",
+                "Unknown"
+            )
+
+            away = teams_info.get(
+                "away",
+                {}
+            ).get(
+                "name",
+                "Unknown"
+            )
 
             league_name = league.get(
                 "name",
                 "Unknown competition"
+            )
+
+            date_display = match_date.strftime(
+                "%d %b %Y, %H:%M UTC"
             )
 
             reply += (
@@ -319,7 +452,9 @@ fixture_response = await api_get(
                 f"🏆 {league_name}\n\n"
             )
 
-        await update.message.reply_text(reply)
+        await update.message.reply_text(
+            reply
+        )
 
     except Exception as e:
 
@@ -344,7 +479,8 @@ async def handle_message(
         await update.message.reply_text(
             "⚽ Match received!\n\n"
             f"{message}\n\n"
-            "🔧 Match analysis engine will be connected next."
+            "🔧 Match analysis engine will "
+            "be connected next."
         )
 
     else:
