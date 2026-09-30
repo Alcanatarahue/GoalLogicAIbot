@@ -424,9 +424,13 @@ def main():
         TELEGRAM_BOT_TOKEN
     ).build()
 
-    app.add_handler(
-        CommandHandler("start", start)
-    )
+   async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "⚽ GoalLogic AI is online!\n\n"
+        "Available commands:\n\n"
+        "/team Chelsea\n"
+        "/fixtures Chelsea\n"
+        "/)
 
     app.add_handler(
         CommandHandler("apitest", api_test)
