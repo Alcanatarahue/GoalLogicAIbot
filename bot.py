@@ -210,11 +210,14 @@ async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         if not fixtures_data:
-            await update.message.reply_text(
-                f"❌ No upcoming fixtures found for {team_name}."
-            )
-            return
+    api_data = fixture_response.json()
 
+    await update.message.reply_text(
+        "⚠️ API returned no fixtures.\n\n"
+        f"Results: {api_data.get('results')}\n"
+        f"Errors: {api_data.get('errors')}"
+    )
+    return
         message = f"📅 Next fixtures for {team_name}:\n\n"
 
         for item in fixtures_data:
