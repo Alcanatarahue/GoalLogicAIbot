@@ -126,7 +126,105 @@ async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Connection error:\n{str(e)[:500]}"
         )
 
+async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not FOOTBALL_API_KEY:
+        await update.message.reply_text(
+            "❌ FOOTBALL_API_KEY is missing from Render."
+        )
+        return
 
+    if not context.args:
+        await update.message.reply_text(
+            "Please enter a team name.\n\n"
+            "Example:\n"
+            "/fixtures Chelsea"
+        )
+        return
+
+    team_name = " ".join(context.args)
+
+    await update.message.reply_text(
+        f"🔎 Finding fixtures for {team_name}..."
+    )
+
+    try:
+        headers = {
+            "x-apisports-key": FOOTBALL_API_KEY
+        }
+
+        team_params = {
+            "search": team_name
+        }
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            team_response = await client.get(
+                f"{API_BASE}/teams",
+                headers=headers,
+                params=team_params
+            )
+
+            if team_response.status_code != 200:
+                await update.message.reply_text(
+                    f"❌ API error: {team_response.status_code}"
+                )
+                return
+
+            teams = team_response.json().get("response", [])
+
+            if not teams:
+                await update.message.reply_text(
+                    f"❌ No team found for {team_name}"
+                )
+                return
+
+            team_id = teams[0]["team"]["id"]
+
+            fixture_params = {
+                "team": team_id,
+                "next": 5
+            }
+
+            fixture_response = await client.get(
+                f"{API_BASE}/fixtures",
+                headers=headers,
+                params=fixture_params
+            )
+
+            if fixture_response.status_code != 200:
+                await update.message.reply_text(
+                    f"❌ Fixture API error: {fixture_response.status_code}"
+                )
+                return
+
+            fixtures_data = fixture_response.json().get("response", [])
+
+        if not fixtures_data:
+            await update.message.reply_text(
+                f"❌ No upcoming fixtures found for {team_name}."
+            )
+            return
+
+        message = f"📅 Next fixtures for {team_name}:\n\n"
+
+        for item in fixtures_data:
+            fixture = item["fixture"]
+            teams_data = item["teams"]
+
+            home = teams_data["home"]["name"]
+            away = teams_data["away"]["name"]
+            date = fixture["date"]
+
+            message += (
+                f"⚽ {home} vs {away}\n"
+                f"🕒 {date}\n\n"
+            )
+
+        await update.message.reply_text(message)
+
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Error:\n{str(e)[:500]}"
+        )
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     match = update.message.text
 
@@ -150,7 +248,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("apitest", api_test))
     app.add_handler(CommandHandler("team", team_search))
-
+app.add_handler(CommandHandler("fixtures", fixtures))
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
