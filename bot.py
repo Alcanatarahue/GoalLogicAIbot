@@ -31,10 +31,12 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
 
         self.send_response(200)
+
         self.send_header(
             "Content-Type",
             "text/plain"
         )
+
         self.end_headers()
 
         self.wfile.write(
@@ -293,7 +295,7 @@ async def get_team_fixtures(team_id):
 
 
 # ==================================================
-# BASIC FIXTURES COMMAND
+# BASIC FIXTURES
 # ==================================================
 
 async def fixtures(
@@ -394,7 +396,7 @@ async def fixtures(
 
 
 # ==================================================
-# CALCULATE GOAL STATISTICS
+# GOAL STATISTICS
 # ==================================================
 
 def calculate_stats(
@@ -518,7 +520,7 @@ def calculate_stats(
 
 
 # ==================================================
-# HOME / AWAY FILTER
+# HOME / AWAY
 # ==================================================
 
 def filter_home_matches(
@@ -626,11 +628,6 @@ def calculate_h2h_stats(
             {}
         ).get("id")
 
-        fixture_away_id = teams.get(
-            "away",
-            {}
-        ).get("id")
-
         if fixture_home_id == home_id:
 
             home_team_goals = home_goals
@@ -713,6 +710,7 @@ def get_stat_value(
 
             try:
                 return float(value)
+
             except:
                 return None
 
@@ -739,24 +737,6 @@ async def get_fixture_statistics(
         "response",
         []
     ), None
-
-
-def calculate_match_statistics(
-    matches,
-    team_id,
-    limit=5
-):
-
-    matches = matches[-limit:]
-
-    totals = {
-        "shots": [],
-        "shots_on_target": [],
-        "corners": [],
-        "yellow_cards": [],
-    }
-
-    return totals
 
 
 async def collect_team_match_stats(
@@ -863,6 +843,218 @@ def average(values):
 
 
 # ==================================================
+# BETTING MARKET ANALYSIS
+# ==================================================
+
+def market_label(value):
+
+    if value >= 75:
+        return "STRONG"
+    elif value >= 60:
+        return "GOOD"
+    elif value >= 50:
+        return "MODERATE"
+    else:
+        return "LOW"
+
+
+def calculate_market_analysis(
+    home_stats,
+    away_stats,
+    home_home_stats,
+    away_away_stats,
+    home_match_stats,
+    away_match_stats,
+):
+
+    markets = {}
+
+    # ----------------------------------------------
+    # OVER 1.5
+    # ----------------------------------------------
+
+    over_1_5 = (
+        home_home_stats["over_1_5"]
+        + away_away_stats["over_1_5"]
+    ) / 2
+
+    markets["over_1_5"] = over_1_5
+
+    # ----------------------------------------------
+    # OVER 2.5
+    # ----------------------------------------------
+
+    over_2_5 = (
+        home_home_stats["over_2_5"]
+        + away_away_stats["over_2_5"]
+    ) / 2
+
+    markets["over_2_5"] = over_2_5
+
+    # ----------------------------------------------
+    # BTTS
+    # ----------------------------------------------
+
+    btts = (
+        home_home_stats["btts"]
+        + away_away_stats["btts"]
+    ) / 2
+
+    markets["btts"] = btts
+
+    # ----------------------------------------------
+    # HOME TEAM TO SCORE
+    # ----------------------------------------------
+
+    home_score_rate = (
+        (
+            home_home_stats["avg_for"] > 0
+        )
+    )
+
+    away_concede_rate = (
+        away_away_stats["avg_against"] > 0
+    )
+
+    if home_score_rate and away_concede_rate:
+        home_team_score = 75
+    elif home_score_rate:
+        home_team_score = 60
+    else:
+        home_team_score = 30
+
+    markets["home_team_score"] = home_team_score
+
+    # ----------------------------------------------
+    # AWAY TEAM TO SCORE
+    # ----------------------------------------------
+
+    away_score_rate = (
+        away_away_stats["avg_for"] > 0
+    )
+
+    home_concede_rate = (
+        home_home_stats["avg_against"] > 0
+    )
+
+    if away_score_rate and home_concede_rate:
+        away_team_score = 75
+    elif away_score_rate:
+        away_team_score = 60
+    else:
+        away_team_score = 30
+
+    markets["away_team_score"] = away_team_score
+
+    # ----------------------------------------------
+    # SHOTS
+    # ----------------------------------------------
+
+    home_shots = average(
+        home_match_stats["shots"]
+    )
+
+    away_shots = average(
+        away_match_stats["shots"]
+    )
+
+    if home_shots is not None and away_shots is not None:
+
+        total_shots = home_shots + away_shots
+
+        if total_shots >= 25:
+            shots_rating = 80
+        elif total_shots >= 20:
+            shots_rating = 65
+        elif total_shots >= 15:
+            shots_rating = 50
+        else:
+            shots_rating = 35
+
+    else:
+
+        shots_rating = None
+
+    markets["shots"] = shots_rating
+
+    # ----------------------------------------------
+    # CORNERS
+    # ----------------------------------------------
+
+    home_corners = average(
+        home_match_stats["corners"]
+    )
+
+    away_corners = average(
+        away_match_stats["corners"]
+    )
+
+    if (
+        home_corners is not None
+        and away_corners is not None
+    ):
+
+        total_corners = (
+            home_corners
+            + away_corners
+        )
+
+        if total_corners >= 10:
+            corners_rating = 80
+        elif total_corners >= 8:
+            corners_rating = 65
+        elif total_corners >= 6:
+            corners_rating = 50
+        else:
+            corners_rating = 35
+
+    else:
+
+        corners_rating = None
+
+    markets["corners"] = corners_rating
+
+    # ----------------------------------------------
+    # CARDS
+    # ----------------------------------------------
+
+    home_cards = average(
+        home_match_stats["yellow_cards"]
+    )
+
+    away_cards = average(
+        away_match_stats["yellow_cards"]
+    )
+
+    if (
+        home_cards is not None
+        and away_cards is not None
+    ):
+
+        total_cards = (
+            home_cards
+            + away_cards
+        )
+
+        if total_cards >= 4:
+            cards_rating = 80
+        elif total_cards >= 3:
+            cards_rating = 65
+        elif total_cards >= 2:
+            cards_rating = 50
+        else:
+            cards_rating = 35
+
+    else:
+
+        cards_rating = None
+
+    markets["cards"] = cards_rating
+
+    return markets
+
+
+# ==================================================
 # ANALYZE
 # ==================================================
 
@@ -899,11 +1091,10 @@ async def analyze(
     try:
 
         await update.message.reply_text(
-            "🔎 Analyzing match...\n\n"
+            "🔎 GoalLogic AI is analyzing...\n\n"
             f"⚽ {home_name.title()} vs "
             f"{away_name.title()}\n\n"
-            "Collecting form, home/away, H2H "
-            "and match statistics..."
+            "Collecting historical statistics..."
         )
 
         home_team, home_error = await find_team(
@@ -968,7 +1159,7 @@ async def analyze(
             return
 
         # ==========================================
-        # GOAL FORM
+        # FORM
         # ==========================================
 
         home_stats = calculate_stats(
@@ -1043,6 +1234,23 @@ async def analyze(
             5
         )
 
+        # ==========================================
+        # MARKET ANALYSIS
+        # ==========================================
+
+        markets = calculate_market_analysis(
+            home_stats,
+            away_stats,
+            home_home_stats,
+            away_away_stats,
+            home_match_stats,
+            away_match_stats,
+        )
+
+        # ==========================================
+        # STAT VALUES
+        # ==========================================
+
         home_shots = average(
             home_match_stats["shots"]
         )
@@ -1076,7 +1284,7 @@ async def analyze(
         )
 
         # ==========================================
-        # BUILD REPORT
+        # REPORT
         # ==========================================
 
         reply = (
@@ -1088,7 +1296,7 @@ async def analyze(
 
             "📊 DATA PERIOD\n"
             f"Season: {FIXTURE_SEASON}\n"
-            "Recent sample: Last 5 available\n\n"
+            "Sample: Last 5 available\n\n"
 
             "━━━━━━━━━━━━━━━━━━\n"
             "📈 RECENT FORM\n"
@@ -1118,9 +1326,6 @@ async def analyze(
 
             f"🏠 {home_official} HOME\n"
             f"Games: {home_home_stats['played']}\n"
-            f"✅ Wins: {home_home_stats['wins']}\n"
-            f"🤝 Draws: {home_home_stats['draws']}\n"
-            f"❌ Losses: {home_home_stats['losses']}\n"
             f"⚽ Avg scored: {home_home_stats['avg_for']:.2f}\n"
             f"🥅 Avg conceded: {home_home_stats['avg_against']:.2f}\n"
             f"🔥 Over 2.5: {home_home_stats['over_2_5']:.0f}%\n"
@@ -1128,9 +1333,6 @@ async def analyze(
 
             f"✈️ {away_official} AWAY\n"
             f"Games: {away_away_stats['played']}\n"
-            f"✅ Wins: {away_away_stats['wins']}\n"
-            f"🤝 Draws: {away_away_stats['draws']}\n"
-            f"❌ Losses: {away_away_stats['losses']}\n"
             f"⚽ Avg scored: {away_away_stats['avg_for']:.2f}\n"
             f"🥅 Avg conceded: {away_away_stats['avg_against']:.2f}\n"
             f"🔥 Over 2.5: {away_away_stats['over_2_5']:.0f}%\n"
@@ -1141,70 +1343,68 @@ async def analyze(
             "━━━━━━━━━━━━━━━━━━\n\n"
 
             f"🏠 {home_official}\n"
-            f"🎯 Avg shots: "
+            f"🎯 Shots: "
             f"{home_shots:.2f}\n"
             if home_shots is not None else
             f"🏠 {home_official}\n"
-            f"🎯 Avg shots: N/A\n"
+            "🎯 Shots: N/A\n"
         )
 
         reply += (
-
-            f"🎯 Avg shots on target: "
+            f"🎯 Shots on target: "
             f"{home_sot:.2f}\n"
-            if home_sot is not None else
-            "🎯 Avg shots on target: N/A\n"
+            if home_sot is not None
+            else "🎯 Shots on target: N/A\n"
         )
 
         reply += (
-
-            f"🚩 Avg corners: "
+            f"🚩 Corners: "
             f"{home_corners:.2f}\n"
-            if home_corners is not None else
-            "🚩 Avg corners: N/A\n"
+            if home_corners is not None
+            else "🚩 Corners: N/A\n"
         )
 
         reply += (
-
-            f"🟨 Avg yellow cards: "
+            f"🟨 Yellow cards: "
             f"{home_cards:.2f}\n\n"
-            if home_cards is not None else
-            "🟨 Avg yellow cards: N/A\n\n"
+            if home_cards is not None
+            else "🟨 Yellow cards: N/A\n\n"
         )
 
         reply += (
-
             f"✈️ {away_official}\n"
-            f"🎯 Avg shots: "
+            f"🎯 Shots: "
             f"{away_shots:.2f}\n"
-            if away_shots is not None else
+            if away_shots is not None
+            else
             f"✈️ {away_official}\n"
-            f"🎯 Avg shots: N/A\n"
+            "🎯 Shots: N/A\n"
         )
 
         reply += (
-
-            f"🎯 Avg shots on target: "
+            f"🎯 Shots on target: "
             f"{away_sot:.2f}\n"
-            if away_sot is not None else
-            "🎯 Avg shots on target: N/A\n"
+            if away_sot is not None
+            else "🎯 Shots on target: N/A\n"
         )
 
         reply += (
-
-            f"🚩 Avg corners: "
+            f"🚩 Corners: "
             f"{away_corners:.2f}\n"
-            if away_corners is not None else
-            "🚩 Avg corners: N/A\n"
+            if away_corners is not None
+            else "🚩 Corners: N/A\n"
         )
 
         reply += (
-
-            f"🟨 Avg yellow cards: "
+            f"🟨 Yellow cards: "
             f"{away_cards:.2f}\n\n"
-            if away_cards is not None else
-            "🟨 Avg yellow cards: N/A\n\n"
+            if away_cards is not None
+            else "🟨 Yellow cards: N/A\n\n"
         )
+
+        # ==========================================
+        # H2H
+        # ==========================================
 
         reply += (
             "━━━━━━━━━━━━━━━━━━\n"
@@ -1228,12 +1428,6 @@ async def analyze(
                 f"🤝 Draws: "
                 f"{h2h_stats['draws']}\n\n"
 
-                f"⚽ {home_official} H2H goals: "
-                f"{h2h_stats['home_goals']}\n"
-
-                f"⚽ {away_official} H2H goals: "
-                f"{h2h_stats['away_goals']}\n\n"
-
                 f"🔥 H2H Over 2.5: "
                 f"{h2h_stats['over_2_5']:.0f}%\n"
 
@@ -1244,44 +1438,179 @@ async def analyze(
         else:
 
             reply += (
-                "No H2H meetings were found "
-                "through the available API data.\n\n"
+                "No H2H meetings were returned "
+                "by the available API data.\n\n"
             )
+
+        # ==========================================
+        # BETTING MARKETS
+        # ==========================================
+
+        reply += (
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📊 MARKET ANALYSIS\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+
+            f"⚽ Over 1.5 goals: "
+            f"{markets['over_1_5']:.0f}% "
+            f"({market_label(markets['over_1_5'])})\n"
+
+            f"🔥 Over 2.5 goals: "
+            f"{markets['over_2_5']:.0f}% "
+            f"({market_label(markets['over_2_5'])})\n"
+
+            f"🎯 BTTS: "
+            f"{markets['btts']:.0f}% "
+            f"({market_label(markets['btts'])})\n"
+
+            f"🏠 {home_official} to score: "
+            f"{markets['home_team_score']:.0f}% "
+            f"({market_label(markets['home_team_score'])})\n"
+
+            f"✈️ {away_official} to score: "
+            f"{markets['away_team_score']:.0f}% "
+            f"({market_label(markets['away_team_score'])})\n\n"
+        )
+
+        if markets["shots"] is not None:
+
+            reply += (
+                f"🎯 Shots market signal: "
+                f"{markets['shots']:.0f}% "
+                f"({market_label(markets['shots'])})\n"
+            )
+
+        else:
+
+            reply += (
+                "🎯 Shots market signal: N/A\n"
+            )
+
+        if markets["corners"] is not None:
+
+            reply += (
+                f"🚩 Corners market signal: "
+                f"{markets['corners']:.0f}% "
+                f"({market_label(markets['corners'])})\n"
+            )
+
+        else:
+
+            reply += (
+                "🚩 Corners market signal: N/A\n"
+            )
+
+        if markets["cards"] is not None:
+
+            reply += (
+                f"🟨 Cards market signal: "
+                f"{markets['cards']:.0f}% "
+                f"({market_label(markets['cards'])})\n\n"
+            )
+
+        else:
+
+            reply += (
+                "🟨 Cards market signal: N/A\n\n"
+            )
+
+        # ==========================================
+        # PRIMARY STATISTICAL SIGNAL
+        # ==========================================
+
+        candidates = {
+            "Over 1.5 goals": markets["over_1_5"],
+            "Over 2.5 goals": markets["over_2_5"],
+            "BTTS": markets["btts"],
+            f"{home_official} to score": markets["home_team_score"],
+            f"{away_official} to score": markets["away_team_score"],
+        }
+
+        valid_candidates = {
+            name: value
+            for name, value in candidates.items()
+            if value is not None
+        }
+
+        best_market = max(
+            valid_candidates,
+            key=valid_candidates.get
+        )
+
+        best_value = valid_candidates[
+            best_market
+        ]
+
+        if best_value >= 75:
+            risk = "LOWER"
+        elif best_value >= 60:
+            risk = "MEDIUM"
+        else:
+            risk = "HIGHER"
+
+        # ==========================================
+        # FINAL SIGNAL
+        # ==========================================
 
         reply += (
 
             "━━━━━━━━━━━━━━━━━━\n"
-            "📊 GOALLOGIC SUMMARY\n"
+            "🤖 GOALLOGIC AI SIGNAL\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
 
-            f"🏠 Home team: {home_official}\n"
-            f"✈️ Away team: {away_official}\n\n"
+            f"📌 Statistical signal: "
+            f"{best_market}\n"
 
-            "The report combines:\n"
-            "• Recent form\n"
-            "• Goals\n"
-            "• Over 2.5\n"
-            "• BTTS\n"
-            "• Home/Away form\n"
-            "• H2H\n"
-            "• Shots\n"
-            "• Shots on target\n"
-            "• Corners\n"
-            "• Yellow cards\n\n"
+            f"📈 Historical rate: "
+            f"{best_value:.0f}%\n"
 
-            "⚠️ DATA LIMITATION\n"
-            "Your current API plan only provides "
-            "fixture seasons 2022-2024. These figures "
-            "therefore use historical 2024 data.\n\n"
+            f"⚠️ Risk level: "
+            f"{risk}\n\n"
 
-            "⚠️ STATISTICS NOTE\n"
-            "Some competitions do not provide every "
-            "match statistic. Missing statistics are "
-            "shown as N/A.\n\n"
+            "💡 ADVICE\n"
+        )
 
-            "⚠️ BETTING NOTE\n"
-            "Statistics describe past performance and "
-            "do not guarantee a future result."
+        if best_value >= 75:
+
+            reply += (
+                "BET CANDIDATE — the historical "
+                "sample shows a strong statistical "
+                "signal, but it is not guaranteed.\n"
+            )
+
+        elif best_value >= 60:
+
+            reply += (
+                "ALTERNATIVE — the statistics show "
+                "some support, but the signal is not "
+                "strong enough to treat as low risk.\n"
+            )
+
+        else:
+
+            reply += (
+                "AVOID — the available historical "
+                "sample does not provide a strong "
+                "statistical signal.\n"
+            )
+
+        reply += (
+
+            "\n━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ IMPORTANT DATA NOTICE\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+
+            "This analysis uses historical 2024 "
+            "data because your current API plan "
+            "does not provide the current 2026 "
+            "fixture season.\n\n"
+
+            "The percentages are statistical rates, "
+            "NOT guaranteed probabilities of the "
+            "next match.\n\n"
+
+            "Use the analysis as information, not "
+            "as a guarantee of a betting result."
         )
 
         await update.message.reply_text(
