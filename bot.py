@@ -161,6 +161,79 @@ async def team_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def fixtures(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    if not context.args:
+        await update.message.reply_text(
+            "Use: /fixtures Team Name"
+        )
+        return
+
+    team_name = " ".join(context.args)
+
+    headers = {
+        "x-apisports-key": FOOTBALL_API_KEY
+    }
+
+    try:
+        # Find team
+        async with httpx.AsyncClient() as client:
+
+            search = await client.get(
+                f"{API_BASE}/teams",
+                headers=headers,
+                params={"search": team_name}
+            )
+
+            data = search.json()
+
+            teams = data.get("response", [])
+
+            if not teams:
+                await update.message.reply_text(
+                    "❌ Team not found."
+                )
+                return
+
+            team_id = teams[0]["team"]["id"]
+
+            # Get next fixtures
+            fixtures_response = await client.get(
+                f"{API_BASE}/fixtures",
+                headers=headers,
+                params={
+                    "team": team_id,
+                    "next": 5
+                }
+            )
+
+            fixtures_data = fixtures_response.json()
+
+            matches = fixtures_data.get("response", [])
+
+            if not matches:
+                await update.message.reply_text(
+                    "ℹ️ No upcoming fixtures found."
+                )
+                return
+
+            reply = f"⚽ Upcoming fixtures for {team_name}\n\n"
+
+            for match in matches:
+                home = match["teams"]["home"]["name"]
+                away = match["teams"]["away"]["name"]
+                date = match["fixture"]["date"]
+
+                reply += (
+                    f"📅 {date[:10]}\n"
+                    f"{home} vs {away}\n\n"
+                )
+
+            await update.message.reply_text(reply)
+
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Error fetching fixtures:\n{e}"
+        )
+
     if not FOOTBALL_API_KEY:
         await update.message.reply_text(
             "❌ Football API key is missing."
