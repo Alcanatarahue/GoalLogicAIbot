@@ -580,32 +580,52 @@ def market_reason(
 ):
     reasons = []
 
-    if market == "over15":
+    if market == "Over 1.5 Goals":
         if stats1["over15"] >= 80:
             reasons.append(
-                f"{stats1['over15']:.0f}% of {stats1['sample']} recent matches cleared 1.5 goals"
+                f"Team 1 has a {stats1['over15']:.0f}% "
+                f"recent Over 1.5 rate"
             )
 
         if stats2["over15"] >= 80:
             reasons.append(
-                f"{stats2['over15']:.0f}% of {stats2['sample']} recent matches cleared 1.5 goals"
+                f"Team 2 has a {stats2['over15']:.0f}% "
+                f"recent Over 1.5 rate"
             )
 
-        if stats1["avg_for"] >= 1.5 or stats2["avg_for"] >= 1.5:
-            reasons.append("both teams show meaningful attacking output")
+        combined = (
+            stats1["avg_total"] +
+            stats2["avg_total"]
+        ) / 2
 
-        if not reasons:
-            reasons.append("recent goal frequency is not strong enough")
+        if combined >= 2.5:
+            reasons.append(
+                f"combined recent goal average is {combined:.1f}"
+            )
 
-    elif market == "over25":
+        if venue1 and venue1["over15"] >= 80:
+            reasons.append(
+                f"recent home Over 1.5 rate is "
+                f"{venue1['over15']:.0f}%"
+            )
+
+        if venue2 and venue2["over15"] >= 80:
+            reasons.append(
+                f"recent away Over 1.5 rate is "
+                f"{venue2['over15']:.0f}%"
+            )
+
+    elif market == "Over 2.5 Goals":
         if stats1["over25"] >= 70:
             reasons.append(
-                f"Team 1 has a {stats1['over25']:.0f}% Over 2.5 rate"
+                f"Team 1 has a {stats1['over25']:.0f}% "
+                f"recent Over 2.5 rate"
             )
 
         if stats2["over25"] >= 70:
             reasons.append(
-                f"Team 2 has a {stats2['over25']:.0f}% Over 2.5 rate"
+                f"Team 2 has a {stats2['over25']:.0f}% "
+                f"recent Over 2.5 rate"
             )
 
         combined = (
@@ -618,28 +638,62 @@ def market_reason(
                 f"combined recent goal average is {combined:.1f}"
             )
 
-        if not reasons:
+        if venue1 and venue1["over25"] < 50:
             reasons.append(
-                "the recent goal environment is mixed"
+                f"recent home Over 2.5 rate is only "
+                f"{venue1['over25']:.0f}% — counter-signal"
             )
 
-    elif market == "btts":
-        if stats1["scoring"] >= 80 and stats2["scoring"] >= 80:
+        if venue2 and venue2["over25"] < 50:
             reasons.append(
-                "both teams have strong scoring consistency"
+                f"recent away Over 2.5 rate is only "
+                f"{venue2['over25']:.0f}% — counter-signal"
             )
 
-        if stats1["clean"] >= 50 or stats2["clean"] >= 50:
+    elif market == "BTTS — Yes":
+        if stats1["scoring"] >= 80:
             reasons.append(
-                "recent clean-sheet rates create a counter-signal"
+                f"Team 1 scores in {stats1['scoring']:.0f}% "
+                f"of recent matches"
             )
 
-        if not reasons:
+        if stats2["scoring"] >= 80:
             reasons.append(
-                "scoring and defensive trends are mixed"
+                f"Team 2 scores in {stats2['scoring']:.0f}% "
+                f"of recent matches"
             )
+
+        if venue1 and venue1["btts"] >= 70:
+            reasons.append(
+                f"recent home BTTS rate is "
+                f"{venue1['btts']:.0f}%"
+            )
+
+        if venue2 and venue2["btts"] >= 70:
+            reasons.append(
+                f"recent away BTTS rate is "
+                f"{venue2['btts']:.0f}%"
+            )
+
+        if venue1 and venue1["clean"] >= 50:
+            reasons.append(
+                f"Team 1 recent home clean-sheet rate is "
+                f"{venue1['clean']:.0f}% — counter-signal"
+            )
+
+        if venue2 and venue2["clean"] >= 50:
+            reasons.append(
+                f"Team 2 recent away clean-sheet rate is "
+                f"{venue2['clean']:.0f}% — counter-signal"
+            )
+
+    if not reasons:
+        reasons.append(
+            "Recent statistics provide a mixed signal for this market"
+        )
 
     return "; ".join(reasons)
+    
 
 
 # ============================================================
