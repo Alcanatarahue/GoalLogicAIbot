@@ -489,6 +489,10 @@ def confidence_score(overall, venue, market):
     if not overall:
         return 0
 
+    # --------------------------------------------------------
+    # BASE SIGNAL
+    # --------------------------------------------------------
+
     if market == "over15":
         overall_signal = overall["over15"]
 
@@ -519,34 +523,103 @@ def confidence_score(overall, venue, market):
     else:
         return 0
 
-    reliability = min(
-        100,
-        (venue["sample"] / 7) * 100
-        if venue
-        else 50
+    # --------------------------------------------------------
+    # SAMPLE RELIABILITY
+    # --------------------------------------------------------
+
+    if venue:
+        sample = venue["sample"]
+
+        if sample >= 7:
+            reliability = 100
+        elif sample >= 5:
+            reliability = 90
+        elif sample >= 3:
+            reliability = 75
+        elif sample >= 2:
+            reliability = 60
+        else:
+            reliability = 40
+    else:
+        reliability = 50
+
+    # --------------------------------------------------------
+    # AGREEMENT BETWEEN OVERALL + VENUE
+    # --------------------------------------------------------
+
+    difference = abs(
+        overall_signal - venue_signal
     )
+
+    if difference <= 10:
+        agreement = 100
+    elif difference <= 20:
+        agreement = 85
+    elif difference <= 30:
+        agreement = 70
+    elif difference <= 40:
+        agreement = 55
+    else:
+        agreement = 40
+
+    # --------------------------------------------------------
+    # BASE CONFIDENCE
+    # --------------------------------------------------------
 
     confidence = (
-        overall_signal * 0.50
+        overall_signal * 0.45
         + venue_signal * 0.30
-        + reliability * 0.20
+        + reliability * 0.15
+        + agreement * 0.10
     )
 
-    # Conservative caps for small venue samples
+    # --------------------------------------------------------
+    # STRONG COUNTER-SIGNAL PENALTY
+    # --------------------------------------------------------
+
+    if venue:
+        if market == "over15":
+            counter_signal = venue["over15"] < 50
+
+        elif market == "over25":
+            counter_signal = venue["over25"] < 50
+
+        elif market == "btts":
+            counter_signal = venue["btts"] < 50
+
+        else:
+            counter_signal = False
+
+        if counter_signal:
+            confidence -= 8
+
+    # --------------------------------------------------------
+    # CONSERVATIVE CAPS
+    # --------------------------------------------------------
+
     if venue:
         if venue["sample"] < 3:
             confidence = min(confidence, 75)
+
         elif venue["sample"] < 5:
             confidence = min(confidence, 82)
+
         elif venue["sample"] < 7:
             confidence = min(confidence, 86)
+
         else:
             confidence = min(confidence, 90)
+
     else:
         confidence = min(confidence, 80)
 
-    return round(confidence)
+    # --------------------------------------------------------
+    # FINAL RANGE
+    # --------------------------------------------------------
 
+    confidence = max(0, min(90, confidence))
+
+    return round(confidence)
 
 def grade(confidence):
     if confidence >= 80:
