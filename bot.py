@@ -1,36 +1,39 @@
 import os
 import threading
-import http.server
-import statistics
-import httpx
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import httpx
 from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
     ContextTypes,
+    MessageHandler,
     filters,
 )
 
-# =========================================================
+
+# ============================================================
 # SETTINGS
-# =========================================================
+# ============================================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
 
 API_BASE = "https://v3.football.api-sports.io"
 
+# Your current API plan supports these historical seasons.
 FIXTURE_SEASON = 2024
+
+# Number of recent matches used for form.
 SAMPLE_SIZE = 5
 
 
-# =========================================================
+# ============================================================
 # RENDER HEALTH SERVER
-# =========================================================
+# ============================================================
 
-class HealthHandler(http.server.BaseHTTPRequestHandler):
+class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.send_response(200)
@@ -42,31 +45,29 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
         return
 
 
-def start_health_server():
+def run_health_server():
     port = int(os.environ.get("PORT", 10000))
 
-    server = http.server.HTTPServer(
+    server = HTTPServer(
         ("0.0.0.0", port),
         HealthHandler
     )
 
+    print(f"GoalLogic AI is running on port {port}.")
     server.serve_forever()
 
 
-threading.Thread(
-    target=start_health_server,
-    daemon=True
-).start()
-
-
-# =========================================================
-# API
-# =========================================================
+# ============================================================
+# FOOTBALL API
+# ============================================================
 
 def api_get(endpoint, params=None):
 
     if not FOOTBALL_API_KEY:
+        print("FOOTBALL_API_KEY is missing.")
         return None
+
+    url = API_BASE + endpoint
 
     headers = {
         "x-apisports-key": FOOTBALL_API_KEY
@@ -75,34 +76,41 @@ def api_get(endpoint, params=None):
     try:
 
         response = httpx.get(
-            API_BASE + endpoint,
+            url,
             headers=headers,
-            params=params,
+            params=params or {},
             timeout=30
         )
 
+        print(
+            f"API REQUEST: {endpoint} | "
+            f"STATUS: {response.status_code}"
+        )
+
         if response.status_code != 200:
-            print("API ERROR:", response.status_code)
-            print(response.text)
+
+            print(
+                "API ERROR:",
+                response.text
+            )
+
             return None
 
-        data = response.json()
-
-        if data.get("errors"):
-            print("API ERRORS:", data["errors"])
-            return None
-
-        return data
+        return response.json()
 
     except Exception as e:
 
-        print("API EXCEPTION:", e)
+        print(
+            "API REQUEST ERROR:",
+            e
+        )
+
         return None
 
 
-# =========================================================
-# FIND TEAM
-# =========================================================
+# ============================================================
+# TEAM SEARCH
+# ============================================================
 
 def find_team(team_name):
 
@@ -116,17 +124,17 @@ def find_team(team_name):
     if not data:
         return None
 
-    teams = data.get("response", [])
+    response = data.get("response", [])
 
-    if not teams:
+    if not response:
         return None
 
-    return teams[0]
+    return response[0]
 
 
-# =========================================================
-# TEAM FIXTURES
-# =========================================================
+# ============================================================
+# FIXTURES
+# ============================================================
 
 def get_team_fixtures(team_id):
 
@@ -144,11 +152,27 @@ def get_team_fixtures(team_id):
     return data.get("response", [])
 
 
-# =========================================================
-# BASIC STATS
-# =========================================================
+# ============================================================
+# BASIC TEAM STATISTICS
+# ============================================================
 
 def calculate_stats(fixtures, team_id):
+
+    if not fixtures:
+
+        return {
+            "games": 0,
+            "wins": 0,
+            "draws": 0,
+            "losses": 0,
+            "avg_goals": 0,
+            "avg_conceded": 0,
+            "over_1_5": 0,
+            "over_2_5": 0,
+            "btts": 0,
+            "scored": 0,
+            "clean_sheets": 0
+        }
 
     wins = 0
     draws = 0
@@ -157,62 +181,95 @@ def calculate_stats(fixtures, team_id):
     goals_for = 0
     goals_against = 0
 
-    over_1_5 = 0
-    over_2_5 = 0
-    btts = 0
-    scored = 0
-    clean_sheets = 0
+    over_1_5_count = 0
+    over_2_5_count = 0
+    btts_count = 0
+    scored_count = 0
+    clean_sheet_count = 0
 
-    valid_games = 0
+    games = 0
 
     for fixture in fixtures:
 
-        home_id = fixture["teams"]["home"]["id"]
-        away_id = fixture["teams"]["away"]["id"]
+        fixture_status = (
+            fixture.get("fixture", {})
+            .get("status", {})
+            .get("short")
+        )
 
-        home_goals = fixture["goals"]["home"]
-        away_goals = fixture["goals"]["away"]
-
-        if home_goals is None or away_goals is None:
+        if fixture_status not in [
+            "FT",
+            "AET",
+            "PEN"
+        ]:
             continue
 
-        valid_games += 1
+        teams = fixture.get("teams", {})
+        goals = fixture.get("goals", {})
+
+        home_team = teams.get("home", {})
+        away_team = teams.get("away", {})
+
+        home_id = home_team.get("id")
+        away_id = away_team.get("id")
+
+        home_goals = goals.get("home")
+        away_goals = goals.get("away")
+
+        if (
+            home_goals is None
+            or away_goals is None
+        ):
+            continue
 
         if team_id == home_id:
+
             gf = home_goals
             ga = away_goals
-        else:
+
+        elif team_id == away_id:
+
             gf = away_goals
             ga = home_goals
 
-        if gf > ga:
-            wins += 1
-        elif gf == ga:
-            draws += 1
         else:
-            losses += 1
+            continue
+
+        games += 1
 
         goals_for += gf
         goals_against += ga
 
-        total_goals = home_goals + away_goals
+        if gf > ga:
+            wins += 1
+
+        elif gf == ga:
+            draws += 1
+
+        else:
+            losses += 1
+
+        total_goals = gf + ga
 
         if total_goals >= 2:
-            over_1_5 += 1
+            over_1_5_count += 1
 
         if total_goals >= 3:
-            over_2_5 += 1
-
-        if home_goals > 0 and away_goals > 0:
-            btts += 1
+            over_2_5_count += 1
 
         if gf > 0:
-            scored += 1
+            scored_count += 1
+
+        if gf > 0 and ga > 0:
+            btts_count += 1
 
         if ga == 0:
-            clean_sheets += 1
+            clean_sheet_count += 1
 
-    if valid_games == 0:
+        if games >= SAMPLE_SIZE:
+            break
+
+    if games == 0:
 
         return {
             "games": 0,
@@ -229,151 +286,266 @@ def calculate_stats(fixtures, team_id):
         }
 
     return {
-        "games": valid_games,
+        "games": games,
+
         "wins": wins,
         "draws": draws,
         "losses": losses,
 
         "avg_goals": round(
-            goals_for / valid_games,
+            goals_for / games,
             2
         ),
 
         "avg_conceded": round(
-            goals_against / valid_games,
+            goals_against / games,
             2
         ),
 
         "over_1_5": round(
-            over_1_5 / valid_games * 100
+            over_1_5_count / games * 100
         ),
 
         "over_2_5": round(
-            over_2_5 / valid_games * 100
+            over_2_5_count / games * 100
         ),
 
         "btts": round(
-            btts / valid_games * 100
+            btts_count / games * 100
         ),
 
         "scored": round(
-            scored / valid_games * 100
+            scored_count / games * 100
         ),
 
         "clean_sheets": round(
-            clean_sheets / valid_games * 100
+            clean_sheet_count / games * 100
         )
     }
 
 
-# =========================================================
-# HOME / AWAY
-# =========================================================
+# ============================================================
+# HOME / AWAY FILTERS
+# ============================================================
 
 def get_home_fixtures(fixtures, team_id):
 
-    return [
-        fixture
-        for fixture in fixtures
-        if fixture["teams"]["home"]["id"] == team_id
-    ]
+    result = []
+
+    for fixture in fixtures:
+
+        home_id = (
+            fixture.get("teams", {})
+            .get("home", {})
+            .get("id")
+        )
+
+        if home_id == team_id:
+
+            result.append(fixture)
+
+        if len(result) >= SAMPLE_SIZE:
+            break
+
+    return result
 
 
 def get_away_fixtures(fixtures, team_id):
 
-    return [
-        fixture
-        for fixture in fixtures
-        if fixture["teams"]["away"]["id"] == team_id
-    ]
+    result = []
+
+    for fixture in fixtures:
+
+        away_id = (
+            fixture.get("teams", {})
+            .get("away", {})
+            .get("id")
+        )
+
+        if away_id == team_id:
+
+            result.append(fixture)
+
+        if len(result) >= SAMPLE_SIZE:
+            break
+
+    return result
 
 
-# =========================================================
+# ============================================================
 # MATCH STATISTICS
-# =========================================================
+# ============================================================
 
-def collect_team_match_stats(fixtures, team_id):
+def collect_team_match_stats(
+    fixtures,
+    team_id
+):
 
     shots = []
     shots_on_target = []
     corners = []
     yellow_cards = []
 
+    used_games = 0
+
     for fixture in fixtures:
 
-        fixture_id = fixture["fixture"]["id"]
-
-        data = api_get(
-            "/fixtures/statistics",
-            {
-                "fixture": fixture_id
-            }
+        fixture_id = (
+            fixture.get("fixture", {})
+            .get("id")
         )
 
-        if not data:
+        if not fixture_id:
             continue
 
-        responses = data.get("response", [])
+        try:
 
-        for team_data in responses:
+            data = api_get(
+                "/fixtures/statistics",
+                {
+                    "fixture": fixture_id
+                }
+            )
 
-            if team_data["team"]["id"] != team_id:
+            if not data:
                 continue
 
-            stats = team_data.get("statistics", [])
+            response = data.get(
+                "response",
+                []
+            )
 
-            for item in stats:
+            if not response:
+                continue
 
-                stat_type = item.get("type")
-                value = item.get("value")
+            team_stats = None
+
+            for item in response:
+
+                if (
+                    item.get("team", {})
+                    .get("id")
+                    == team_id
+                ):
+
+                    team_stats = item
+                    break
+
+            if not team_stats:
+                continue
+
+            stats_list = team_stats.get(
+                "statistics",
+                []
+            )
+
+            stat_map = {}
+
+            for stat in stats_list:
+
+                name = stat.get("type")
+                value = stat.get("value")
+
+                stat_map[name] = value
+
+            def numeric(value):
 
                 if value is None:
-                    continue
+                    return None
 
                 if isinstance(value, str):
-                    value = value.replace("%", "")
+
+                    value = (
+                        value
+                        .replace("%", "")
+                    )
 
                 try:
-                    value = float(value)
+                    return float(value)
+
                 except:
-                    continue
+                    return None
 
-                if stat_type == "Total Shots":
-                    shots.append(value)
+            shot_value = numeric(
+                stat_map.get("Total Shots")
+            )
 
-                elif stat_type == "Shots on Goal":
-                    shots_on_target.append(value)
+            sot_value = numeric(
+                stat_map.get("Shots on Goal")
+            )
 
-                elif stat_type == "Corner Kicks":
-                    corners.append(value)
+            corner_value = numeric(
+                stat_map.get("Corner Kicks")
+            )
 
-                elif stat_type == "Yellow Cards":
-                    yellow_cards.append(value)
+            yellow_value = numeric(
+                stat_map.get("Yellow Cards")
+            )
+
+            if shot_value is not None:
+                shots.append(shot_value)
+
+            if sot_value is not None:
+                shots_on_target.append(
+                    sot_value
+                )
+
+            if corner_value is not None:
+                corners.append(
+                    corner_value
+                )
+
+            if yellow_value is not None:
+                yellow_cards.append(
+                    yellow_value
+                )
+
+            used_games += 1
+
+        except Exception as e:
+
+            print(
+                "STATISTICS ERROR:",
+                e
+            )
+
+    def average(values):
+
+        if not values:
+            return 0
+
+        return round(
+            sum(values) / len(values),
+            1
+        )
 
     return {
-        "shots": round(
-            statistics.mean(shots), 1
-        ) if shots else 0,
+        "games": used_games,
 
-        "shots_on_target": round(
-            statistics.mean(shots_on_target), 1
-        ) if shots_on_target else 0,
+        "shots": average(shots),
 
-        "corners": round(
-            statistics.mean(corners), 1
-        ) if corners else 0,
+        "shots_on_target": average(
+            shots_on_target
+        ),
 
-        "yellow_cards": round(
-            statistics.mean(yellow_cards), 1
-        ) if yellow_cards else 0
+        "corners": average(
+            corners
+        ),
+
+        "yellow_cards": average(
+            yellow_cards
+        )
     }
 
 
-# =========================================================
-# EVIDENCE
-# =========================================================
+# ============================================================
+# EVIDENCE QUALITY
+# ============================================================
 
-def evidence_quality(rate, sample_size):
+def evidence_quality(
+    rate,
+    sample_size
+):
 
     if sample_size <= 0:
         return "NO DATA"
@@ -403,11 +575,14 @@ def evidence_quality(rate, sample_size):
     return "LIMITED"
 
 
-# =========================================================
-# RECORD TEXT
-# =========================================================
+# ============================================================
+# RECORD
+# ============================================================
 
-def record_text(rate, games):
+def record_text(
+    rate,
+    games
+):
 
     if games <= 0:
         return "No data"
@@ -423,352 +598,236 @@ def record_text(rate, games):
     )
 
 
-# =========================================================
+# ============================================================
 # MARKET ANALYSIS
-# =========================================================
+# IMPORTANT:
+# USE HOME DATA FOR HOME TEAM
+# USE AWAY DATA FOR AWAY TEAM
+# ============================================================
 
-def calculate_market_analysis(home_stats, away_stats):
+def calculate_market_analysis(
+    home_home,
+    away_away
+):
 
     over_1_5 = round(
         (
-            home_stats["over_1_5"]
-            + away_stats["over_1_5"]
+            home_home["over_1_5"]
+            + away_away["over_1_5"]
         ) / 2
     )
 
     over_2_5 = round(
         (
-            home_stats["over_2_5"]
-            + away_stats["over_2_5"]
+            home_home["over_2_5"]
+            + away_away["over_2_5"]
         ) / 2
     )
 
     btts = round(
         (
-            home_stats["btts"]
-            + away_stats["btts"]
+            home_home["btts"]
+            + away_away["btts"]
         ) / 2
     )
 
     return {
+
         "over_1_5": over_1_5,
+
         "over_2_5": over_2_5,
+
         "btts": btts,
-        "home_to_score": home_stats["scored"],
-        "away_to_score": away_stats["scored"]
+
+        "home_to_score":
+            home_home["scored"],
+
+        "away_to_score":
+            away_away["scored"]
     }
 
 
-# =========================================================
-# ADD SUPPORT
-# =========================================================
+# ============================================================
+# DIRECT HIT-RATE SCORE
+#
+# The historical hit rate is the most important factor.
+# 100% direct hit rate = 7/10 base score.
+# Supporting statistics can add up to roughly 3 points.
+# ============================================================
 
-def add_support(support, text, points):
+def direct_base_score(rate):
 
-    support.append(
-        {
-            "text": text,
-            "points": points
-        }
+    if rate <= 0:
+        return 0
+
+    return round(
+        (rate / 100) * 7,
+        1
     )
 
 
-# =========================================================
+# ============================================================
 # SIGNAL ENGINE
-# =========================================================
+# ============================================================
 
 def calculate_signal(
     market,
+    home_stats,
+    away_stats,
     home_home,
     away_away,
-    home_stat,
-    away_stat
+    home_match_stats,
+    away_match_stats
 ):
 
-    raw_score = 0
+    market_rates = calculate_market_analysis(
+        home_home,
+        away_away
+    )
+
+    rate = market_rates[market]
+
+    score = direct_base_score(rate)
+
     support = []
     caution = []
 
-    # =====================================================
-    # HOME TO SCORE
-    # =====================================================
+    # --------------------------------------------------------
+    # HOME TEAM TO SCORE
+    # --------------------------------------------------------
 
     if market == "home_to_score":
 
-        games = home_home["games"]
+        if away_away["avg_conceded"] >= 1.2:
 
-        if games > 0:
+            score += 1
 
-            if home_home["scored"] >= 80:
-
-                raw_score += 2
-
-                add_support(
-                    support,
-                    "Home team scored in "
-                    + record_text(
-                        home_home["scored"],
-                        games
-                    )
-                    + " home matches",
-                    2
-                )
-
-            elif home_home["scored"] >= 60:
-
-                raw_score += 1
-
-                add_support(
-                    support,
-                    "Home team scored in "
-                    + record_text(
-                        home_home["scored"],
-                        games
-                    )
-                    + " home matches",
-                    1
-                )
-
-            else:
-
-                raw_score -= 2
-
-                caution.append(
-                    "Home team failed to score in several home matches"
-                )
-
-        opponent_games = away_away["games"]
-
-        if opponent_games > 0:
-
-            if away_away["avg_conceded"] >= 1.2:
-
-                raw_score += 2
-
-                add_support(
-                    support,
-                    "Opponent concedes "
-                    + str(away_away["avg_conceded"])
-                    + " goals per away match",
-                    2
-                )
-
-            elif away_away["avg_conceded"] < 0.8:
-
-                raw_score -= 1
-
-                caution.append(
-                    "Opponent has a low away goals-conceded average"
-                )
+            support.append(
+                "Away team concedes "
+                f"{away_away['avg_conceded']} goals "
+                "per away match"
+            )
 
         if home_home["avg_goals"] >= 1.5:
 
-            raw_score += 1
+            score += 1
 
-            add_support(
-                support,
+            support.append(
                 "Home team averages "
-                + str(home_home["avg_goals"])
-                + " goals at home",
-                1
+                f"{home_home['avg_goals']} goals "
+                "at home"
             )
 
-        elif home_home["avg_goals"] < 1.0:
+        if (
+            home_match_stats["shots_on_target"]
+            >= 5
+        ):
 
-            raw_score -= 1
+            score += 1
+
+            support.append(
+                "Home team averages "
+                f"{home_match_stats['shots_on_target']} "
+                "shots on target"
+            )
+
+        if away_away["clean_sheets"] >= 60:
+
+            score -= 1
 
             caution.append(
-                "Home team averages below 1.0 goal at home"
+                "Away team has a strong "
+                "away clean-sheet rate"
             )
 
-        if home_stat["shots_on_target"] >= 5:
-
-            raw_score += 1
-
-            add_support(
-                support,
-                "Home team averages "
-                + str(home_stat["shots_on_target"])
-                + " shots on target",
-                1
-            )
-
-        if home_home["clean_sheets"] <= 20 and games >= 2:
-
-            raw_score += 1
-
-            add_support(
-                support,
-                "Home scoring environment shows limited clean-sheet resistance",
-                1
-            )
-
-    # =====================================================
-    # AWAY TO SCORE
-    # =====================================================
+    # --------------------------------------------------------
+    # AWAY TEAM TO SCORE
+    # --------------------------------------------------------
 
     elif market == "away_to_score":
 
-        games = away_away["games"]
-
-        if games > 0:
-
-            if away_away["scored"] >= 80:
-
-                raw_score += 2
-
-                add_support(
-                    support,
-                    "Away team scored in "
-                    + record_text(
-                        away_away["scored"],
-                        games
-                    )
-                    + " away matches",
-                    2
-                )
-
-            elif away_away["scored"] >= 60:
-
-                raw_score += 1
-
-                add_support(
-                    support,
-                    "Away team scored in "
-                    + record_text(
-                        away_away["scored"],
-                        games
-                    )
-                    + " away matches",
-                    1
-                )
-
-            else:
-
-                raw_score -= 2
-
-                caution.append(
-                    "Away team failed to score in several away matches"
-                )
-
         if home_home["avg_conceded"] >= 1.2:
 
-            raw_score += 2
+            score += 1
 
-            add_support(
-                support,
-                "Home opponent concedes "
-                + str(home_home["avg_conceded"])
-                + " goals per home match",
-                2
-            )
-
-        elif home_home["avg_conceded"] < 0.8:
-
-            raw_score -= 1
-
-            caution.append(
-                "Home opponent has a low goals-conceded average"
+            support.append(
+                "Home team concedes "
+                f"{home_home['avg_conceded']} goals "
+                "per home match"
             )
 
         if away_away["avg_goals"] >= 1.5:
 
-            raw_score += 1
+            score += 1
 
-            add_support(
-                support,
+            support.append(
                 "Away team averages "
-                + str(away_away["avg_goals"])
-                + " goals away",
-                1
+                f"{away_away['avg_goals']} goals "
+                "away from home"
             )
 
-        elif away_away["avg_goals"] < 1.0:
+        if (
+            away_match_stats["shots_on_target"]
+            >= 5
+        ):
 
-            raw_score -= 1
+            score += 1
+
+            support.append(
+                "Away team averages "
+                f"{away_match_stats['shots_on_target']} "
+                "shots on target"
+            )
+
+        if home_home["clean_sheets"] >= 60:
+
+            score -= 1
 
             caution.append(
-                "Away team averages below 1.0 goal away"
+                "Home team has a strong "
+                "home clean-sheet rate"
             )
 
-        if away_stat["shots_on_target"] >= 5:
-
-            raw_score += 1
-
-            add_support(
-                support,
-                "Away team averages "
-                + str(away_stat["shots_on_target"])
-                + " shots on target",
-                1
-            )
-
-        if home_home["clean_sheets"] <= 20 and home_home["games"] >= 2:
-
-            raw_score += 1
-
-            add_support(
-                support,
-                "Home team has a limited clean-sheet rate",
-                1
-            )
-
-    # =====================================================
+    # --------------------------------------------------------
     # OVER 1.5
-    # =====================================================
+    # --------------------------------------------------------
 
     elif market == "over_1_5":
 
         if home_home["over_1_5"] >= 80:
 
-            raw_score += 2
+            score += 1
 
-            add_support(
-                support,
-                "Home matches produced Over 1.5 in "
-                + record_text(
-                    home_home["over_1_5"],
-                    home_home["games"]
-                ),
-                2
+            support.append(
+                "Home over 1.5 rate is "
+                f"{home_home['over_1_5']}%"
             )
 
         elif home_home["over_1_5"] >= 60:
 
-            raw_score += 1
+            score += 0.5
 
-        else:
-
-            raw_score -= 1
-
-            caution.append(
-                "Home Over 1.5 rate is below 60%"
+            support.append(
+                "Home over 1.5 rate is "
+                f"{home_home['over_1_5']}%"
             )
 
         if away_away["over_1_5"] >= 80:
 
-            raw_score += 2
+            score += 1
 
-            add_support(
-                support,
-                "Away matches produced Over 1.5 in "
-                + record_text(
-                    away_away["over_1_5"],
-                    away_away["games"]
-                ),
-                2
+            support.append(
+                "Away over 1.5 rate is "
+                f"{away_away['over_1_5']}%"
             )
 
         elif away_away["over_1_5"] >= 60:
 
-            raw_score += 1
+            score += 0.5
 
-        else:
-
-            raw_score -= 1
-
-            caution.append(
-                "Away Over 1.5 rate is below 60%"
+            support.append(
+                "Away over 1.5 rate is "
+                f"{away_away['over_1_5']}%"
             )
 
         combined_goals = (
@@ -780,75 +839,60 @@ def calculate_signal(
 
         if combined_goals >= 2.5:
 
-            raw_score += 2
+            score += 1
 
-            add_support(
-                support,
-                "Combined goal environment is "
-                + str(round(combined_goals, 2)),
-                2
+            support.append(
+                "Combined goal environment "
+                f"is {round(combined_goals, 2)}"
             )
 
         elif combined_goals < 1.8:
 
-            raw_score -= 1
-
             caution.append(
-                "Combined goal environment is relatively low"
+                "Combined goal environment "
+                "is relatively low"
             )
 
-    # =====================================================
+    # --------------------------------------------------------
     # OVER 2.5
-    # =====================================================
+    # --------------------------------------------------------
 
     elif market == "over_2_5":
 
         if home_home["over_2_5"] >= 80:
 
-            raw_score += 2
+            score += 1
 
-            add_support(
-                support,
-                "Home Over 2.5 occurred in "
-                + record_text(
-                    home_home["over_2_5"],
-                    home_home["games"]
-                ),
-                2
+            support.append(
+                "Home over 2.5 rate is "
+                f"{home_home['over_2_5']}%"
             )
 
         elif home_home["over_2_5"] >= 60:
 
-            raw_score += 1
+            score += 0.5
 
-        else:
-
-            caution.append(
-                "Home Over 2.5 rate is below 60%"
+            support.append(
+                "Home over 2.5 rate is "
+                f"{home_home['over_2_5']}%"
             )
 
         if away_away["over_2_5"] >= 80:
 
-            raw_score += 2
+            score += 1
 
-            add_support(
-                support,
-                "Away Over 2.5 occurred in "
-                + record_text(
-                    away_away["over_2_5"],
-                    away_away["games"]
-                ),
-                2
+            support.append(
+                "Away over 2.5 rate is "
+                f"{away_away['over_2_5']}%"
             )
 
         elif away_away["over_2_5"] >= 60:
 
-            raw_score += 1
+            score += 0.5
 
-        else:
-
-            caution.append(
-                "Away Over 2.5 rate is below 60%"
+            support.append(
+                "Away over 2.5 rate is "
+                f"{away_away['over_2_5']}%"
             )
 
         combined_goals = (
@@ -860,351 +904,203 @@ def calculate_signal(
 
         if combined_goals >= 3.0:
 
-            raw_score += 2
+            score += 1
 
-            add_support(
-                support,
-                "Combined goal environment is "
-                + str(round(combined_goals, 2))
-                + " goals",
-                2
+            support.append(
+                "Strong combined goal "
+                f"environment: {round(combined_goals, 2)}"
             )
 
         elif combined_goals >= 2.5:
 
-            raw_score += 1
+            score += 0.5
 
-        else:
+            support.append(
+                "Positive combined goal "
+                f"environment: {round(combined_goals, 2)}"
+            )
 
-            raw_score -= 1
+        elif combined_goals < 2.0:
 
             caution.append(
-                "Combined goal environment is below 2.5 goals"
+                "Combined goal environment "
+                "is below 2.0"
             )
 
-        if home_stat["shots_on_target"] >= 5:
+        if (
+            home_match_stats["shots_on_target"] >= 5
+            and
+            away_match_stats["shots_on_target"] >= 5
+        ):
 
-            raw_score += 1
+            score += 0.5
 
-            add_support(
-                support,
-                "Home team averages "
-                + str(home_stat["shots_on_target"])
-                + " shots on target",
-                1
+            support.append(
+                "Both teams average "
+                "5+ shots on target"
             )
 
-        if away_stat["shots_on_target"] >= 5:
-
-            raw_score += 1
-
-            add_support(
-                support,
-                "Away team averages "
-                + str(away_stat["shots_on_target"])
-                + " shots on target",
-                1
-            )
-
-    # =====================================================
+    # --------------------------------------------------------
     # BTTS
-    # =====================================================
+    #
+    # BTTS direct hit rate is deliberately dominant.
+    # Secondary scoring factors have smaller weights.
+    # --------------------------------------------------------
 
     elif market == "btts":
 
-        if home_home["scored"] >= 80:
+        if (
+            home_home["scored"] >= 80
+            and
+            away_away["scored"] >= 80
+        ):
 
-            raw_score += 2
+            score += 1
 
-            add_support(
-                support,
-                "Home team scored in "
-                + record_text(
-                    home_home["scored"],
-                    home_home["games"]
-                ),
-                2
+            support.append(
+                "Both teams scored in "
+                "80%+ of relevant matches"
             )
 
-        elif home_home["scored"] >= 60:
+        if (
+            home_home["btts"] >= 80
+            and
+            away_away["btts"] >= 80
+        ):
 
-            raw_score += 1
+            score += 1
 
-        else:
+            support.append(
+                "Both teams have strong "
+                "BTTS records"
+            )
 
-            raw_score -= 2
+        combined_scoring = (
+            home_home["avg_goals"]
+            + away_away["avg_goals"]
+        )
+
+        if combined_scoring >= 2.5:
+
+            score += 0.5
+
+            support.append(
+                "Combined scoring average is "
+                f"{round(combined_scoring, 2)}"
+            )
+
+        if (
+            home_home["scored"] < 60
+            or
+            away_away["scored"] < 60
+        ):
 
             caution.append(
-                "Home scoring rate is below 60%"
+                "At least one team has a "
+                "weaker scoring rate"
             )
 
-        if away_away["scored"] >= 80:
+    # ========================================================
+    # SCORE LIMIT
+    # ========================================================
 
-            raw_score += 2
-
-            add_support(
-                support,
-                "Away team scored in "
-                + record_text(
-                    away_away["scored"],
-                    away_away["games"]
-                ),
-                2
-            )
-
-        elif away_away["scored"] >= 60:
-
-            raw_score += 1
-
-        else:
-
-            raw_score -= 2
-
-            caution.append(
-                "Away scoring rate is below 60%"
-            )
-
-        if home_home["btts"] >= 80:
-
-            raw_score += 1
-
-            add_support(
-                support,
-                "Home BTTS rate is "
-                + str(home_home["btts"])
-                + "%",
-                1
-            )
-
-        if away_away["btts"] >= 80:
-
-            raw_score += 1
-
-            add_support(
-                support,
-                "Away BTTS rate is "
-                + str(away_away["btts"])
-                + "%",
-                1
-            )
-
-        if home_home["avg_goals"] + away_away["avg_goals"] >= 2.5:
-
-            raw_score += 1
-
-            add_support(
-                support,
-                "Combined scoring averages are "
-                + str(
-                    round(
-                        home_home["avg_goals"]
-                        + away_away["avg_goals"],
-                        2
-                    )
-                )
-                + " goals",
-                1
-            )
-
-    # =====================================================
-    # SCORE NORMALIZATION
-    # =====================================================
-
-    # The score is an internal historical signal score.
-    # It is NOT a probability.
-    #
-    # We no longer multiply the score by a severe
-    # sample-size weight. Sample size is handled through
-    # the evidence label and caution message instead.
-
-    if raw_score < 0:
-        raw_score = 0
-
-    if raw_score > 10:
-        raw_score = 10
-
-    signal_score = round(
-        raw_score,
-        1
+    score = max(
+        0,
+        min(
+            10,
+            round(score, 1)
+        )
     )
 
-    # =====================================================
-    # SAMPLE WARNING
-    # =====================================================
+    # ========================================================
+    # EVIDENCE
+    # ========================================================
 
-    sample_sizes = [
-        home_home["games"],
-        away_away["games"]
-    ]
+    relevant_samples = []
 
-    valid_sizes = [
-        x for x in sample_sizes
+    if market in [
+        "over_1_5",
+        "over_2_5",
+        "btts"
+    ]:
+
+        relevant_samples.append(
+            home_home["games"]
+        )
+
+        relevant_samples.append(
+            away_away["games"]
+        )
+
+    elif market == "home_to_score":
+
+        relevant_samples.append(
+            home_home["games"]
+        )
+
+    elif market == "away_to_score":
+
+        relevant_samples.append(
+            away_away["games"]
+        )
+
+    valid_samples = [
+        x for x in relevant_samples
         if x > 0
     ]
 
-    if valid_sizes:
+    if valid_samples:
 
         average_sample = (
-            sum(valid_sizes)
-            / len(valid_sizes)
+            sum(valid_samples)
+            / len(valid_samples)
         )
 
     else:
 
         average_sample = 0
 
-    if average_sample < 3:
+    if average_sample < 2:
 
         caution.append(
-            "Very small home/away sample limits reliability"
+            "Extremely small historical sample"
+        )
+
+    elif average_sample < 3:
+
+        caution.append(
+            "Very small home/away sample"
         )
 
     elif average_sample < 5:
 
         caution.append(
-            "Home/away sample is smaller than 5 matches"
+            "Home/away sample is smaller "
+            "than 5 matches"
         )
 
     return {
-        "score": signal_score,
-        "raw_score": raw_score,
+        "market": market,
+        "score": score,
+        "rate": rate,
         "support": support,
-        "caution": caution,
-        "average_sample": round(
-            average_sample,
-            1
-        )
+        "caution": caution
     }
 
 
-# =========================================================
-# ANALYZE MATCH
-# =========================================================
+# ============================================================
+# FORMAT MARKET NAME
+# ============================================================
 
-def analyze_match(home_name, away_name):
-
-    home_team = find_team(home_name)
-    away_team = find_team(away_name)
-
-    if not home_team or not away_team:
-
-        return None, "One or both teams could not be found."
-
-    home_id = home_team["team"]["id"]
-    away_id = away_team["team"]["id"]
-
-    home_fixtures = get_team_fixtures(home_id)
-    away_fixtures = get_team_fixtures(away_id)
-
-    if not home_fixtures or not away_fixtures:
-
-        return None, "Football data could not be retrieved."
-
-    home_fixtures = sorted(
-        home_fixtures,
-        key=lambda x: x["fixture"]["timestamp"],
-        reverse=True
-    )[:SAMPLE_SIZE]
-
-    away_fixtures = sorted(
-        away_fixtures,
-        key=lambda x: x["fixture"]["timestamp"],
-        reverse=True
-    )[:SAMPLE_SIZE]
-
-    home_stats = calculate_stats(
-        home_fixtures,
-        home_id
-    )
-
-    away_stats = calculate_stats(
-        away_fixtures,
-        away_id
-    )
-
-    home_home_fixtures = get_home_fixtures(
-        home_fixtures,
-        home_id
-    )
-
-    away_away_fixtures = get_away_fixtures(
-        away_fixtures,
-        away_id
-    )
-
-    home_home_stats = calculate_stats(
-        home_home_fixtures,
-        home_id
-    )
-
-    away_away_stats = calculate_stats(
-        away_away_fixtures,
-        away_id
-    )
-
-    home_stat_data = collect_team_match_stats(
-        home_home_fixtures,
-        home_id
-    )
-
-    away_stat_data = collect_team_match_stats(
-        away_away_fixtures,
-        away_id
-    )
-
-    markets = calculate_market_analysis(
-        home_stats,
-        away_stats
-    )
-
-    signals = {}
-
-    signals["home_to_score"] = calculate_signal(
-        "home_to_score",
-        home_home_stats,
-        away_away_stats,
-        home_stat_data,
-        away_stat_data
-    )
-
-    signals["away_to_score"] = calculate_signal(
-        "away_to_score",
-        home_home_stats,
-        away_away_stats,
-        home_stat_data,
-        away_stat_data
-    )
-
-    signals["over_1_5"] = calculate_signal(
-        "over_1_5",
-        home_home_stats,
-        away_away_stats,
-        home_stat_data,
-        away_stat_data
-    )
-
-    signals["over_2_5"] = calculate_signal(
-        "over_2_5",
-        home_home_stats,
-        away_away_stats,
-        home_stat_data,
-        away_stat_data
-    )
-
-    signals["btts"] = calculate_signal(
-        "btts",
-        home_home_stats,
-        away_away_stats,
-        home_stat_data,
-        away_stat_data
-    )
+def market_name(market):
 
     names = {
+
         "home_to_score":
-            home_team["team"]["name"] + " to score",
+            "Chelsea to score",
 
         "away_to_score":
-            away_team["team"]["name"] + " to score",
+            "Arsenal to score",
 
         "over_1_5":
             "Over 1.5 goals",
@@ -1216,734 +1112,1252 @@ def analyze_match(home_name, away_name):
             "BTTS"
     }
 
-    rates = {
-        "home_to_score":
-            markets["home_to_score"],
+    return names.get(
+        market,
+        market
+    )
 
-        "away_to_score":
-            markets["away_to_score"],
 
-        "over_1_5":
-            markets["over_1_5"],
+# ============================================================
+# ANALYZE MATCH
+# ============================================================
 
-        "over_2_5":
-            markets["over_2_5"],
+async def analyze_match(
+    home_name,
+    away_name
+):
 
-        "btts":
-            markets["btts"]
-    }
+    home_team = find_team(
+        home_name
+    )
 
-    ordered = sorted(
-        signals.keys(),
-        key=lambda x: signals[x]["score"],
+    away_team = find_team(
+        away_name
+    )
+
+    if not home_team:
+
+        return (
+            f"❌ Could not find "
+            f"{home_name}."
+        )
+
+    if not away_team:
+
+        return (
+            f"❌ Could not find "
+            f"{away_name}."
+        )
+
+    home_id = (
+        home_team
+        .get("team", {})
+        .get("id")
+    )
+
+    away_id = (
+        away_team
+        .get("team", {})
+        .get("id")
+    )
+
+    official_home_name = (
+        home_team
+        .get("team", {})
+        .get("name", home_name)
+    )
+
+    official_away_name = (
+        away_team
+        .get("team", {})
+        .get("name", away_name)
+    )
+
+    # --------------------------------------------------------
+    # FIXTURES
+    # --------------------------------------------------------
+
+    home_fixtures = get_team_fixtures(
+        home_id
+    )
+
+    away_fixtures = get_team_fixtures(
+        away_id
+    )
+
+    if not home_fixtures:
+
+        return (
+            "⚠️ Football data could not "
+            "be retrieved for the home team."
+        )
+
+    if not away_fixtures:
+
+        return (
+            "⚠️ Football data could not "
+            "be retrieved for the away team."
+        )
+
+    # --------------------------------------------------------
+    # LAST 5 GENERAL FORM
+    # --------------------------------------------------------
+
+    home_stats = calculate_stats(
+        home_fixtures,
+        home_id
+    )
+
+    away_stats = calculate_stats(
+        away_fixtures,
+        away_id
+    )
+
+    # --------------------------------------------------------
+    # HOME / AWAY
+    # --------------------------------------------------------
+
+    home_home_fixtures = get_home_fixtures(
+        home_fixtures,
+        home_id
+    )
+
+    away_away_fixtures = get_away_fixtures(
+        away_fixtures,
+        away_id
+    )
+
+    home_home = calculate_stats(
+        home_home_fixtures,
+        home_id
+    )
+
+    away_away = calculate_stats(
+        away_away_fixtures,
+        away_id
+    )
+
+    # --------------------------------------------------------
+    # MATCH STATISTICS
+    # --------------------------------------------------------
+
+    home_match_stats = collect_team_match_stats(
+        home_fixtures[:SAMPLE_SIZE],
+        home_id
+    )
+
+    away_match_stats = collect_team_match_stats(
+        away_fixtures[:SAMPLE_SIZE],
+        away_id
+    )
+
+    # --------------------------------------------------------
+    # MARKET ANALYSIS
+    # --------------------------------------------------------
+
+    markets = calculate_market_analysis(
+        home_home,
+        away_away
+    )
+
+    # --------------------------------------------------------
+    # SIGNALS
+    # --------------------------------------------------------
+
+    market_list = [
+        "home_to_score",
+        "away_to_score",
+        "over_1_5",
+        "over_2_5",
+        "btts"
+    ]
+
+    signals = []
+
+    for market in market_list:
+
+        signal = calculate_signal(
+            market,
+            home_stats,
+            away_stats,
+            home_home,
+            away_away,
+            home_match_stats,
+            away_match_stats
+        )
+
+        signals.append(signal)
+
+    # Highest score first.
+    # If tied, higher historical rate first.
+    signals.sort(
+        key=lambda x: (
+            x["score"],
+            x["rate"]
+        ),
         reverse=True
     )
 
-    return {
-        "home_name": home_team["team"]["name"],
-        "away_name": away_team["team"]["name"],
+    # --------------------------------------------------------
+    # TOP SIGNAL
+    # --------------------------------------------------------
 
-        "home_stats": home_stats,
-        "away_stats": away_stats,
+    top_signal = signals[0]
 
-        "home_home_stats": home_home_stats,
-        "away_away_stats": away_away_stats,
+    # ========================================================
+    # OUTPUT
+    # ========================================================
 
-        "home_stat_data": home_stat_data,
-        "away_stat_data": away_stat_data,
+    lines = []
 
-        "markets": markets,
+    lines.append(
+        "⚽ GOALLOGIC AI ANALYSIS"
+    )
 
-        "signals": signals,
-        "names": names,
-        "rates": rates,
+    lines.append("")
+    lines.append(
+        f"🏟️ {official_home_name} "
+        f"vs {official_away_name}"
+    )
 
-        "ordered": ordered
-    }, None
+    lines.append("")
+    lines.append(
+        "📊 DATA PERIOD"
+    )
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append(
+        f"Season: {FIXTURE_SEASON}"
+    )
+
+    lines.append(
+        "Sample: Last 5 available matches"
+    )
+
+    # --------------------------------------------------------
+    # RECENT FORM
+    # --------------------------------------------------------
+
+    lines.append("")
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+    lines.append(
+        "📈 RECENT FORM"
+    )
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append("")
+    lines.append(
+        f"🏠 {official_home_name}"
+    )
+
+    lines.append(
+        f"✅ Wins: {home_stats['wins']}"
+    )
+
+    lines.append(
+        f"🤝 Draws: {home_stats['draws']}"
+    )
+
+    lines.append(
+        f"❌ Losses: {home_stats['losses']}"
+    )
+
+    lines.append(
+        f"⚽ Avg goals: {home_stats['avg_goals']}"
+    )
+
+    lines.append(
+        f"🥅 Avg conceded: "
+        f"{home_stats['avg_conceded']}"
+    )
+
+    lines.append(
+        f"🔥 Over 2.5: "
+        f"{home_stats['over_2_5']}%"
+    )
+
+    lines.append(
+        f"🎯 BTTS: "
+        f"{home_stats['btts']}%"
+    )
+
+    lines.append("")
+    lines.append(
+        f"✈️ {official_away_name}"
+    )
+
+    lines.append(
+        f"✅ Wins: {away_stats['wins']}"
+    )
+
+    lines.append(
+        f"🤝 Draws: {away_stats['draws']}"
+    )
+
+    lines.append(
+        f"❌ Losses: {away_stats['losses']}"
+    )
+
+    lines.append(
+        f"⚽ Avg goals: {away_stats['avg_goals']}"
+    )
+
+    lines.append(
+        f"🥅 Avg conceded: "
+        f"{away_stats['avg_conceded']}"
+    )
+
+    lines.append(
+        f"🔥 Over 2.5: "
+        f"{away_stats['over_2_5']}%"
+    )
+
+    lines.append(
+        f"🎯 BTTS: "
+        f"{away_stats['btts']}%"
+    )
+
+    # --------------------------------------------------------
+    # HOME / AWAY
+    # --------------------------------------------------------
+
+    lines.append("")
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append(
+        "🏠 HOME / AWAY"
+    )
+
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append("")
+    lines.append(
+        f"🏠 {official_home_name} HOME"
+    )
+
+    lines.append(
+        f"Games: {home_home['games']}"
+    )
+
+    lines.append(
+        f"⚽ Avg scored: "
+        f"{home_home['avg_goals']}"
+    )
+
+    lines.append(
+        f"🥅 Avg conceded: "
+        f"{home_home['avg_conceded']}"
+    )
+
+    lines.append(
+        f"🔥 Over 2.5: "
+        f"{home_home['over_2_5']}%"
+    )
+
+    lines.append(
+        f"🎯 BTTS: "
+        f"{home_home['btts']}%"
+    )
+
+    lines.append("")
+    lines.append(
+        f"✈️ {official_away_name} AWAY"
+    )
+
+    lines.append(
+        f"Games: {away_away['games']}"
+    )
+
+    lines.append(
+        f"⚽ Avg scored: "
+        f"{away_away['avg_goals']}"
+    )
+
+    lines.append(
+        f"🥅 Avg conceded: "
+        f"{away_away['avg_conceded']}"
+    )
+
+    lines.append(
+        f"🔥 Over 2.5: "
+        f"{away_away['over_2_5']}%"
+    )
+
+    lines.append(
+        f"🎯 BTTS: "
+        f"{away_away['btts']}%"
+    )
+
+    # --------------------------------------------------------
+    # MATCH STATISTICS
+    # --------------------------------------------------------
+
+    lines.append("")
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append(
+        "🎯 MATCH STATISTICS"
+    )
+
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append("")
+    lines.append(
+        f"🏠 {official_home_name}"
+    )
+
+    lines.append(
+        f"🎯 Shots: "
+        f"{home_match_stats['shots']}"
+    )
+
+    lines.append(
+        f"🎯 Shots on target: "
+        f"{home_match_stats['shots_on_target']}"
+    )
+
+    lines.append(
+        f"🚩 Corners: "
+        f"{home_match_stats['corners']}"
+    )
+
+    lines.append(
+        f"🟨 Yellow cards: "
+        f"{home_match_stats['yellow_cards']}"
+    )
+
+    lines.append("")
+    lines.append(
+        f"✈️ {official_away_name}"
+    )
+
+    lines.append(
+        f"🎯 Shots: "
+        f"{away_match_stats['shots']}"
+    )
+
+    lines.append(
+        f"🎯 Shots on target: "
+        f"{away_match_stats['shots_on_target']}"
+    )
+
+    lines.append(
+        f"🚩 Corners: "
+        f"{away_match_stats['corners']}"
+    )
+
+    lines.append(
+        f"🟨 Yellow cards: "
+        f"{away_match_stats['yellow_cards']}"
+    )
+
+    # --------------------------------------------------------
+    # MARKET ANALYSIS
+    # --------------------------------------------------------
+
+    lines.append("")
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append(
+        "📊 MARKET ANALYSIS"
+    )
+
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    # Over 1.5
+    over15_sample = (
+        home_home["games"]
+        + away_away["games"]
+    )
+
+    lines.append("")
+    lines.append(
+        f"⚽ Over 1.5 goals: "
+        f"{markets['over_1_5']}%"
+    )
+
+    lines.append(
+        f"   Sample: "
+        f"{home_home['games']} home + "
+        f"{away_away['games']} away"
+    )
+
+    lines.append(
+        f"   Evidence: "
+        f"{evidence_quality("
+        f"markets['over_1_5'], "
+        f"min(home_home['games'], away_away['games'])"
+        f")}"
+    )
+
+    # Over 2.5
+    lines.append("")
+    lines.append(
+        f"🔥 Over 2.5 goals: "
+        f"{markets['over_2_5']}%"
+    )
+
+    lines.append(
+        f"   Sample: "
+        f"{home_home['games']} home + "
+        f"{away_away['games']} away"
+    )
+
+    lines.append(
+        f"   Evidence: "
+        f"{evidence_quality("
+        f"markets['over_2_5'], "
+        f"min(home_home['games'], away_away['games'])"
+        f")}"
+    )
+
+    # BTTS
+    lines.append("")
+    lines.append(
+        f"🎯 BTTS: "
+        f"{markets['btts']}%"
+    )
+
+    lines.append(
+        f"   Sample: "
+        f"{home_home['games']} home + "
+        f"{away_away['games']} away"
+    )
+
+    lines.append(
+        f"   Evidence: "
+        f"{evidence_quality("
+        f"markets['btts'], "
+        f"min(home_home['games'], away_away['games'])"
+        f")}"
+    )
+
+    # Home to score
+    lines.append("")
+    lines.append(
+        f"🏠 {official_home_name} to score: "
+        f"{markets['home_to_score']}%"
+    )
+
+    lines.append(
+        f"   Record: "
+        f"{record_text("
+        f"markets['home_to_score'], "
+        f"home_home['games']"
+        f")}"
+    )
+
+    lines.append(
+        f"   Evidence: "
+        f"{evidence_quality("
+        f"markets['home_to_score'], "
+        f"home_home['games']"
+        f")}"
+    )
+
+    # Away to score
+    lines.append("")
+    lines.append(
+        f"✈️ {official_away_name} to score: "
+        f"{markets['away_to_score']}%"
+    )
+
+    lines.append(
+        f"   Record: "
+        f"{record_text("
+        f"markets['away_to_score'], "
+        f"away_away['games']"
+        f")}"
+    )
+
+    lines.append(
+        f"   Evidence: "
+        f"{evidence_quality("
+        f"markets['away_to_score'], "
+        f"away_away['games']"
+        f")}"
+    )
+
+    # --------------------------------------------------------
+    # SIGNAL ENGINE
+    # --------------------------------------------------------
+
+    lines.append("")
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append(
+        "🤖 GOALLOGIC AI SIGNAL ENGINE"
+    )
+
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    for index, signal in enumerate(
+        signals,
+        start=1
+    ):
+
+        name = signal["market"]
+
+        if name == "home_to_score":
+
+            display_name = (
+                f"{official_home_name} to score"
+            )
+
+        elif name == "away_to_score":
+
+            display_name = (
+                f"{official_away_name} to score"
+            )
+
+        else:
+
+            display_name = market_name(
+                name
+            )
+
+        lines.append("")
+        lines.append(
+            f"{index}. {display_name}"
+        )
+
+        lines.append(
+            f"   🧠 Signal score: "
+            f"{signal['score']}/10"
+        )
+
+        lines.append(
+            f"   📈 Historical hit rate: "
+            f"{signal['rate']}%"
+        )
+
+        if name == "home_to_score":
+
+            lines.append(
+                f"   📋 Record: "
+                f"{record_text("
+                f"signal['rate'], "
+                f"home_home['games']"
+                f")}"
+            )
+
+            sample_for_evidence = (
+                home_home["games"]
+            )
+
+        elif name == "away_to_score":
+
+            lines.append(
+                f"   📋 Record: "
+                f"{record_text("
+                f"signal['rate'], "
+                f"away_away['games']"
+                f")}"
+            )
+
+            sample_for_evidence = (
+                away_away["games"]
+            )
+
+        else:
+
+            lines.append(
+                f"   📋 Sample: "
+                f"{home_home['games']} home + "
+                f"{away_away['games']} away"
+            )
+
+            sample_for_evidence = min(
+                home_home["games"],
+                away_away["games"]
+            )
+
+        lines.append(
+            f"   📊 Evidence: "
+            f"{evidence_quality("
+            f"signal['rate'], "
+            f"sample_for_evidence"
+            f")}"
+        )
+
+    # --------------------------------------------------------
+    # TOP HISTORICAL SIGNAL
+    # --------------------------------------------------------
+
+    lines.append("")
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append(
+        "🎯 TOP HISTORICAL SIGNAL"
+    )
+
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    top_market = top_signal["market"]
+
+    if top_market == "home_to_score":
+
+        top_name = (
+            f"{official_home_name} to score"
+        )
+
+        top_record = record_text(
+            top_signal["rate"],
+            home_home["games"]
+        )
+
+        top_sample = home_home["games"]
+
+    elif top_market == "away_to_score":
+
+        top_name = (
+            f"{official_away_name} to score"
+        )
+
+        top_record = record_text(
+            top_signal["rate"],
+            away_away["games"]
+        )
+
+        top_sample = away_away["games"]
+
+    else:
+
+        top_name = market_name(
+            top_market
+        )
+
+        top_record = None
+
+        top_sample = min(
+            home_home["games"],
+            away_away["games"]
+        )
+
+    lines.append("")
+    lines.append(
+        f"📌 {top_name}"
+    )
+
+    lines.append(
+        f"🧠 Signal score: "
+        f"{top_signal['score']}/10"
+    )
+
+    lines.append(
+        f"📈 Historical hit rate: "
+        f"{top_signal['rate']}%"
+    )
+
+    if top_record:
+
+        lines.append(
+            f"📋 Historical record: "
+            f"{top_record}"
+        )
+
+    else:
+
+        lines.append(
+            f"📋 Historical sample: "
+            f"{home_home['games']} home + "
+            f"{away_away['games']} away"
+        )
+
+    lines.append(
+        f"📊 Evidence: "
+        f"{evidence_quality("
+        f"top_signal['rate'], "
+        f"top_sample"
+        f")}"
+    )
+
+    if top_signal["support"]:
+
+        lines.append("")
+        lines.append(
+            "✅ SUPPORTING FACTORS"
+        )
+
+        for item in top_signal["support"]:
+
+            lines.append(
+                f"• {item}"
+            )
+
+    if top_signal["caution"]:
+
+        lines.append("")
+        lines.append(
+            "⚠️ CAUTION FACTORS"
+        )
+
+        for item in top_signal["caution"]:
+
+            lines.append(
+                f"• {item}"
+            )
+
+    # --------------------------------------------------------
+    # DATA NOTICE
+    # --------------------------------------------------------
+
+    lines.append("")
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append(
+        "⚠️ DATA NOTICE"
+    )
+
+    lines.append(
+        "━━━━━━━━━━━━━━━━━━"
+    )
+
+    lines.append(
+        "Historical hit rates describe "
+        "the selected historical sample. "
+        "They are not guaranteed probabilities "
+        "of the next match."
+    )
+
+    lines.append("")
+
+    lines.append(
+        "The signal score gives the greatest "
+        "weight to the direct historical hit "
+        "rate, followed by supporting statistics."
+    )
+
+    lines.append("")
+
+    lines.append(
+        "The signal score is an internal "
+        "historical screening score, not a "
+        "guaranteed prediction or probability."
+    )
+
+    lines.append("")
+
+    lines.append(
+        "Small samples such as 2/2 or 3/3 "
+        "can look strong but have limited "
+        "historical support. Larger samples "
+        "provide more evidence."
+    )
+
+    lines.append("")
+
+    lines.append(
+        "Data uses the 2024 season because "
+        "the current API plan does not provide "
+        "the current 2026 fixture season."
+    )
+
+    return "\n".join(lines)
 
 
-# =========================================================
-# START
-# =========================================================
+# ============================================================
+# TELEGRAM COMMANDS
+# ============================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    await update.message.reply_text(
+    message = (
         "⚽ Welcome to GoalLogic AI!\n\n"
-        "I analyze football matches using historical statistics.\n\n"
+
+        "I analyze football matches using "
+        "historical statistics.\n\n"
+
         "Commands:\n"
         "/team Chelsea\n"
         "/fixtures Chelsea\n"
         "/analyze Chelsea vs Arsenal\n"
         "/apitest\n\n"
-        "⚠️ Current API plan provides historical 2024 data."
+
+        "⚠️ Current API plan provides "
+        "historical 2024 data."
     )
-
-
-# =========================================================
-# API TEST
-# =========================================================
-
-async def api_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    data = api_get("/status")
-
-    if data:
-
-        await update.message.reply_text(
-            "✅ FOOTBALL API CONNECTION WORKING"
-        )
-
-    else:
-
-        await update.message.reply_text(
-            "❌ Football API connection failed."
-        )
-
-
-# =========================================================
-# TEAM
-# =========================================================
-
-async def team_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not context.args:
-
-        await update.message.reply_text(
-            "Use:\n/team Chelsea"
-        )
-        return
-
-    team_name = " ".join(context.args)
-
-    team = find_team(team_name)
-
-    if not team:
-
-        await update.message.reply_text(
-            "❌ Team not found."
-        )
-        return
-
-    info = team["team"]
 
     await update.message.reply_text(
-        "⚽ TEAM FOUND\n\n"
-        "🏟️ "
-        + info["name"]
-        + "\n"
-        "🌍 "
-        + info.get("country", "Unknown")
+        message
     )
 
 
-# =========================================================
-# FIXTURES
-# =========================================================
+async def api_test_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-async def fixtures_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = api_get(
+        "/status"
+    )
+
+    if not data:
+
+        await update.message.reply_text(
+            "❌ Football API test failed."
+        )
+
+        return
+
+    await update.message.reply_text(
+        "🔧 FOOTBALL API TEST\n\n"
+        "✅ API connection is working."
+    )
+
+
+async def team_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     if not context.args:
 
         await update.message.reply_text(
-            "Use:\n/fixtures Chelsea"
+            "Usage:\n/team Chelsea"
         )
+
         return
 
-    team_name = " ".join(context.args)
+    team_name = " ".join(
+        context.args
+    )
 
-    team = find_team(team_name)
+    team = find_team(
+        team_name
+    )
 
     if not team:
 
         await update.message.reply_text(
-            "❌ Team not found."
+            f"❌ Could not find "
+            f"{team_name}."
         )
+
         return
 
-    fixtures = get_team_fixtures(
-        team["team"]["id"]
+    team_info = team.get(
+        "team",
+        {}
     )
 
-    fixtures = sorted(
-        fixtures,
-        key=lambda x: x["fixture"]["timestamp"],
-        reverse=True
-    )[:5]
+    name = team_info.get(
+        "name",
+        team_name
+    )
+
+    country = team_info.get(
+        "country",
+        "Unknown"
+    )
+
+    await update.message.reply_text(
+        f"⚽ TEAM FOUND\n\n"
+        f"Team: {name}\n"
+        f"Country: {country}\n"
+        f"Season: {FIXTURE_SEASON}"
+    )
+
+
+async def fixtures_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not context.args:
+
+        await update.message.reply_text(
+            "Usage:\n/fixtures Chelsea"
+        )
+
+        return
+
+    team_name = " ".join(
+        context.args
+    )
+
+    team = find_team(
+        team_name
+    )
+
+    if not team:
+
+        await update.message.reply_text(
+            f"❌ Could not find "
+            f"{team_name}."
+        )
+
+        return
+
+    team_info = team.get(
+        "team",
+        {}
+    )
+
+    team_id = team_info.get(
+        "id"
+    )
+
+    official_name = team_info.get(
+        "name",
+        team_name
+    )
+
+    fixtures = get_team_fixtures(
+        team_id
+    )
 
     if not fixtures:
 
         await update.message.reply_text(
-            "❌ No fixtures found."
+            "⚠️ No fixtures found."
         )
+
         return
 
-    message = (
-        "📅 "
-        + team["team"]["name"]
-        + " — LAST 5 FIXTURES\n\n"
-    )
+    lines = [
+        f"📅 {official_name} — "
+        f"{FIXTURE_SEASON} fixtures",
+        ""
+    ]
+
+    count = 0
 
     for fixture in fixtures:
 
-        home = fixture["teams"]["home"]["name"]
-        away = fixture["teams"]["away"]["name"]
+        if count >= 5:
+            break
 
-        hg = fixture["goals"]["home"]
-        ag = fixture["goals"]["away"]
-
-        message += (
-            "⚽ "
-            + home
-            + " "
-            + str(hg)
-            + "-"
-            + str(ag)
-            + " "
-            + away
-            + "\n"
+        fixture_info = fixture.get(
+            "fixture",
+            {}
         )
 
-    message += (
-        "\n📊 Data season: "
-        + str(FIXTURE_SEASON)
+        teams = fixture.get(
+            "teams",
+            {}
+        )
+
+        date = fixture_info.get(
+            "date",
+            ""
+        )
+
+        home = (
+            teams.get("home", {})
+            .get("name", "")
+        )
+
+        away = (
+            teams.get("away", {})
+            .get("name", "")
+        )
+
+        lines.append(
+            f"⚽ {home} vs {away}"
+        )
+
+        lines.append(
+            f"📅 {date[:10]}"
+        )
+
+        lines.append("")
+
+        count += 1
+
+    await update.message.reply_text(
+        "\n".join(lines)
     )
 
-    await update.message.reply_text(message)
 
+async def analyze_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-# =========================================================
-# ANALYZE
-# =========================================================
-
-async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not context.args:
+    if len(context.args) < 3:
 
         await update.message.reply_text(
-            "Use:\n/analyze Chelsea vs Arsenal"
+            "Usage:\n"
+            "/analyze Chelsea vs Arsenal"
         )
+
         return
 
-    text_input = " ".join(context.args)
+    text = " ".join(
+        context.args
+    )
 
-    parts = text_input.split(" vs ")
+    parts = [
+        part.strip()
+        for part in text.split(" vs ")
+    ]
 
     if len(parts) != 2:
 
         await update.message.reply_text(
-            "Please use:\n"
+            "Please use this format:\n"
             "/analyze Chelsea vs Arsenal"
         )
+
         return
 
-    home_name = parts[0].strip()
-    away_name = parts[1].strip()
+    home_name = parts[0]
+    away_name = parts[1]
 
     await update.message.reply_text(
         "🔎 Analyzing historical data...\n"
         "Please wait."
     )
 
-    result, error = analyze_match(
-        home_name,
-        away_name
-    )
+    try:
 
-    if error:
+        result = await analyze_match(
+            home_name,
+            away_name
+        )
 
         await update.message.reply_text(
-            "❌ " + error
+            result
         )
+
+    except Exception as e:
+
+        print(
+            "ANALYSIS ERROR:",
+            e
+        )
+
+        await update.message.reply_text(
+            "❌ An error occurred during "
+            "the analysis.\n\n"
+            "Please try again."
+        )
+
+
+# ============================================================
+# NORMAL TEXT
+# ============================================================
+
+async def text_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    text = update.message.text.strip()
+
+    if " vs " in text.lower():
+
+        parts = text.lower().split(
+            " vs ",
+            1
+        )
+
+        home_name = parts[0].strip()
+        away_name = parts[1].strip()
+
+        await update.message.reply_text(
+            "🔎 Analyzing historical data...\n"
+            "Please wait."
+        )
+
+        try:
+
+            result = await analyze_match(
+                home_name,
+                away_name
+            )
+
+            await update.message.reply_text(
+                result
+            )
+
+        except Exception as e:
+
+            print(
+                "TEXT ANALYSIS ERROR:",
+                e
+            )
+
+            await update.message.reply_text(
+                "❌ Analysis failed.\n"
+                "Please try again."
+            )
+
         return
 
-    home = result["home_stats"]
-    away = result["away_stats"]
-
-    home_home = result["home_home_stats"]
-    away_away = result["away_away_stats"]
-
-    home_stat = result["home_stat_data"]
-    away_stat = result["away_stat_data"]
-
-    markets = result["markets"]
-
-    signals = result["signals"]
-    names = result["names"]
-    rates = result["rates"]
-
-    ordered = result["ordered"]
-
-    # =====================================================
-    # EVIDENCE
-    # =====================================================
-
-    evidence = {}
-
-    evidence["home_to_score"] = evidence_quality(
-        markets["home_to_score"],
-        home_home["games"]
-    )
-
-    evidence["away_to_score"] = evidence_quality(
-        markets["away_to_score"],
-        away_away["games"]
-    )
-
-    combined_sample = min(
-        home_home["games"],
-        away_away["games"]
-    )
-
-    evidence["over_1_5"] = evidence_quality(
-        markets["over_1_5"],
-        combined_sample
-    )
-
-    evidence["over_2_5"] = evidence_quality(
-        markets["over_2_5"],
-        combined_sample
-    )
-
-    evidence["btts"] = evidence_quality(
-        markets["btts"],
-        combined_sample
-    )
-
-    # =====================================================
-    # MESSAGE
-    # =====================================================
-
-    message = (
-        "⚽ GOALLOGIC AI ANALYSIS\n\n"
-
-        "🏟️ "
-        + result["home_name"]
-        + " vs "
-        + result["away_name"]
-        + "\n\n"
-
-        "📊 DATA PERIOD\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "Season: "
-        + str(FIXTURE_SEASON)
-        + "\n"
-        "Sample: Last "
-        + str(SAMPLE_SIZE)
-        + " available matches\n\n"
-
-        "━━━━━━━━━━━━━━━━━━\n"
-        "📈 RECENT FORM\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-
-        "🏠 "
-        + result["home_name"]
-        + "\n"
-        "✅ Wins: "
-        + str(home["wins"])
-        + "\n"
-        "🤝 Draws: "
-        + str(home["draws"])
-        + "\n"
-        "❌ Losses: "
-        + str(home["losses"])
-        + "\n"
-        "⚽ Avg goals: "
-        + str(home["avg_goals"])
-        + "\n"
-        "🥅 Avg conceded: "
-        + str(home["avg_conceded"])
-        + "\n"
-        "🔥 Over 2.5: "
-        + str(home["over_2_5"])
-        + "%\n"
-        "🎯 BTTS: "
-        + str(home["btts"])
-        + "%\n\n"
-
-        "✈️ "
-        + result["away_name"]
-        + "\n"
-        "✅ Wins: "
-        + str(away["wins"])
-        + "\n"
-        "🤝 Draws: "
-        + str(away["draws"])
-        + "\n"
-        "❌ Losses: "
-        + str(away["losses"])
-        + "\n"
-        "⚽ Avg goals: "
-        + str(away["avg_goals"])
-        + "\n"
-        "🥅 Avg conceded: "
-        + str(away["avg_conceded"])
-        + "\n"
-        "🔥 Over 2.5: "
-        + str(away["over_2_5"])
-        + "%\n"
-        "🎯 BTTS: "
-        + str(away["btts"])
-        + "%\n\n"
-
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🏠 HOME / AWAY\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-
-        "🏠 "
-        + result["home_name"]
-        + " HOME\n"
-        "Games: "
-        + str(home_home["games"])
-        + "\n"
-        "⚽ Avg scored: "
-        + str(home_home["avg_goals"])
-        + "\n"
-        "🥅 Avg conceded: "
-        + str(home_home["avg_conceded"])
-        + "\n"
-        "🔥 Over 2.5: "
-        + str(home_home["over_2_5"])
-        + "%\n"
-        "🎯 BTTS: "
-        + str(home_home["btts"])
-        + "%\n\n"
-
-        "✈️ "
-        + result["away_name"]
-        + " AWAY\n"
-        "Games: "
-        + str(away_away["games"])
-        + "\n"
-        "⚽ Avg scored: "
-        + str(away_away["avg_goals"])
-        + "\n"
-        "🥅 Avg conceded: "
-        + str(away_away["avg_conceded"])
-        + "\n"
-        "🔥 Over 2.5: "
-        + str(away_away["over_2_5"])
-        + "%\n"
-        "🎯 BTTS: "
-        + str(away_away["btts"])
-        + "%\n\n"
-
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🎯 MATCH STATISTICS\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-
-        "🏠 "
-        + result["home_name"]
-        + "\n"
-        "🎯 Shots: "
-        + str(home_stat["shots"])
-        + "\n"
-        "🎯 Shots on target: "
-        + str(home_stat["shots_on_target"])
-        + "\n"
-        "🚩 Corners: "
-        + str(home_stat["corners"])
-        + "\n"
-        "🟨 Yellow cards: "
-        + str(home_stat["yellow_cards"])
-        + "\n\n"
-
-        "✈️ "
-        + result["away_name"]
-        + "\n"
-        "🎯 Shots: "
-        + str(away_stat["shots"])
-        + "\n"
-        "🎯 Shots on target: "
-        + str(away_stat["shots_on_target"])
-        + "\n"
-        "🚩 Corners: "
-        + str(away_stat["corners"])
-        + "\n"
-        "🟨 Yellow cards: "
-        + str(away_stat["yellow_cards"])
-        + "\n\n"
-
-        "━━━━━━━━━━━━━━━━━━\n"
-        "📊 MARKET ANALYSIS\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-
-        "⚽ Over 1.5 goals: "
-        + str(markets["over_1_5"])
-        + "%\n"
-        "   Sample: "
-        + str(combined_sample)
-        + " matches per side where available\n"
-        "   Evidence: "
-        + evidence["over_1_5"]
-        + "\n\n"
-
-        "🔥 Over 2.5 goals: "
-        + str(markets["over_2_5"])
-        + "%\n"
-        "   Sample: "
-        + str(combined_sample)
-        + " matches per side where available\n"
-        "   Evidence: "
-        + evidence["over_2_5"]
-        + "\n\n"
-
-        "🎯 BTTS: "
-        + str(markets["btts"])
-        + "%\n"
-        "   Sample: "
-        + str(combined_sample)
-        + " matches per side where available\n"
-        "   Evidence: "
-        + evidence["btts"]
-        + "\n\n"
-
-        "🏠 "
-        + result["home_name"]
-        + " to score: "
-        + str(markets["home_to_score"])
-        + "%\n"
-        "   Record: "
-        + record_text(
-            markets["home_to_score"],
-            home_home["games"]
-        )
-        + "\n"
-        "   Evidence: "
-        + evidence["home_to_score"]
-        + "\n\n"
-
-        "✈️ "
-        + result["away_name"]
-        + " to score: "
-        + str(markets["away_to_score"])
-        + "%\n"
-        "   Record: "
-        + record_text(
-            markets["away_to_score"],
-            away_away["games"]
-        )
-        + "\n"
-        "   Evidence: "
-        + evidence["away_to_score"]
-        + "\n\n"
-
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🤖 GOALLOGIC AI SIGNAL ENGINE\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-    )
-
-    # =====================================================
-    # SIGNAL LIST
-    # =====================================================
-
-    for index, key in enumerate(ordered):
-
-        signal = signals[key]
-
-        message += (
-            str(index + 1)
-            + ". "
-            + names[key]
-            + "\n"
-            "   🧠 Signal score: "
-            + str(signal["score"])
-            + "/10\n"
-            "   📈 Historical hit rate: "
-            + str(rates[key])
-            + "%\n"
-        )
-
-        if key == "home_to_score":
-
-            message += (
-                "   📋 Record: "
-                + record_text(
-                    rates[key],
-                    home_home["games"]
-                )
-                + "\n"
-            )
-
-        elif key == "away_to_score":
-
-            message += (
-                "   📋 Record: "
-                + record_text(
-                    rates[key],
-                    away_away["games"]
-                )
-                + "\n"
-            )
-
-        else:
-
-            message += (
-                "   📋 Sample: "
-                + str(combined_sample)
-                + " matches per side where available\n"
-            )
-
-        message += (
-            "   📊 Evidence: "
-            + evidence[key]
-            + "\n\n"
-        )
-
-    # =====================================================
-    # TOP SIGNAL
-    # =====================================================
-
-    top_key = ordered[0]
-    top_signal = signals[top_key]
-
-    message += (
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🎯 TOP HISTORICAL SIGNAL\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-
-        "📌 "
-        + names[top_key]
-        + "\n"
-        "🧠 Signal score: "
-        + str(top_signal["score"])
-        + "/10\n"
-        "📈 Historical hit rate: "
-        + str(rates[top_key])
-        + "%\n"
-    )
-
-    if top_key == "home_to_score":
-
-        message += (
-            "📋 Historical record: "
-            + record_text(
-                rates[top_key],
-                home_home["games"]
-            )
-            + "\n"
-        )
-
-    elif top_key == "away_to_score":
-
-        message += (
-            "📋 Historical record: "
-            + record_text(
-                rates[top_key],
-                away_away["games"]
-            )
-            + "\n"
-        )
-
-    else:
-
-        message += (
-            "📋 Historical sample: "
-            + str(combined_sample)
-            + " matches per side where available\n"
-        )
-
-    message += (
-        "\n📊 Evidence: "
-        + evidence[top_key]
-        + "\n\n"
-
-        "✅ SUPPORTING FACTORS\n"
-    )
-
-    if top_signal["support"]:
-
-        for item in top_signal["support"][:5]:
-
-            message += (
-                "• "
-                + item["text"]
-                + "\n"
-            )
-
-    else:
-
-        message += (
-            "• No strong supporting factor identified.\n"
-        )
-
-    message += (
-        "\n⚠️ CAUTION FACTORS\n"
-    )
-
-    if top_signal["caution"]:
-
-        for item in top_signal["caution"][:5]:
-
-            message += (
-                "• "
-                + item
-                + "\n"
-            )
-
-    else:
-
-        message += (
-            "• No major caution factor identified.\n"
-        )
-
-    message += (
-        "\n━━━━━━━━━━━━━━━━━━\n"
-        "⚠️ DATA NOTICE\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-
-        "Historical hit rates describe the selected "
-        "historical sample. They are not guaranteed "
-        "probabilities of the next match.\n\n"
-
-        "The signal score combines multiple historical "
-        "factors. It is an internal historical screening "
-        "score, not a guaranteed prediction or probability.\n\n"
-
-        "Small samples such as 2/2 or 3/3 can look strong "
-        "but have limited evidence. Larger samples provide "
-        "more historical support.\n\n"
-
-        "Data uses the 2024 season because the current "
-        "API plan does not provide the current 2026 "
-        "fixture season."
-    )
-
-    await update.message.reply_text(message)
-
-
-# =========================================================
-# NORMAL MESSAGE
-# =========================================================
-
-async def normal_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     await update.message.reply_text(
-        "⚽ GoalLogic AI\n\n"
-        "Use:\n"
-        "/analyze Chelsea vs Arsenal\n\n"
-        "Other commands:\n"
-        "/team Chelsea\n"
-        "/fixtures Chelsea\n"
-        "/apitest"
+        "⚽ Send a match like:\n\n"
+        "Chelsea vs Arsenal\n\n"
+        "Or use:\n"
+        "/analyze Chelsea vs Arsenal"
     )
 
 
-# =========================================================
+# ============================================================
 # MAIN
-# =========================================================
+# ============================================================
 
 def main():
 
     if not TELEGRAM_BOT_TOKEN:
 
-        print("ERROR: TELEGRAM_BOT_TOKEN is missing.")
+        print(
+            "❌ TELEGRAM_BOT_TOKEN is missing."
+        )
+
         return
 
     if not FOOTBALL_API_KEY:
 
-        print("ERROR: FOOTBALL_API_KEY is missing.")
+        print(
+            "❌ FOOTBALL_API_KEY is missing."
+        )
+
         return
+
+    # Start Render health server
+    health_thread = threading.Thread(
+        target=run_health_server,
+        daemon=True
+    )
+
+    health_thread.start()
+
+    print(
+        "Starting GoalLogic AI..."
+    )
 
     application = (
         Application.builder()
@@ -1952,36 +2366,57 @@ def main():
     )
 
     application.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start_command
+        )
     )
 
     application.add_handler(
-        CommandHandler("apitest", api_test)
+        CommandHandler(
+            "apitest",
+            api_test_command
+        )
     )
 
     application.add_handler(
-        CommandHandler("team", team_command)
+        CommandHandler(
+            "team",
+            team_command
+        )
     )
 
     application.add_handler(
-        CommandHandler("fixtures", fixtures_command)
+        CommandHandler(
+            "fixtures",
+            fixtures_command
+        )
     )
 
     application.add_handler(
-        CommandHandler("analyze", analyze_command)
+        CommandHandler(
+            "analyze",
+            analyze_command
+        )
     )
 
     application.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            normal_message
+            filters.TEXT
+            & ~filters.COMMAND,
+            text_handler
         )
     )
 
-    print("GoalLogic AI is running.")
+    print(
+        "GoalLogic AI is running."
+    )
 
-    application.run_polling()
+    application.run_polling(
+        drop_pending_updates=True
+    )
 
 
 if __name__ == "__main__":
+
     main()
