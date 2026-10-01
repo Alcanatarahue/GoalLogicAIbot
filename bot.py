@@ -826,70 +826,103 @@ def analyze_match(team1_name, team2_name):
         goal_environment(stats1, stats2)
     )
 
-    # Confidence
-    over15_1 = confidence_score(
-        stats1,
-        home_stats,
-        "over15"
-    )
+ # Confidence
 
-    over15_2 = confidence_score(
-        stats2,
-        away_stats,
-        "over15"
-    )
+over15_1 = confidence_score(
+    stats1,
+    home_stats,
+    "over15"
+)
 
-    over25_1 = confidence_score(
-        stats1,
-        home_stats,
-        "over25"
-    )
+over15_2 = confidence_score(
+    stats2,
+    away_stats,
+    "over15"
+)
 
-    over25_2 = confidence_score(
-        stats2,
-        away_stats,
-        "over25"
-    )
+over25_1 = confidence_score(
+    stats1,
+    home_stats,
+    "over25"
+)
 
-    btts_1 = confidence_score(
-        stats1,
-        home_stats,
-        "btts"
-    )
+over25_2 = confidence_score(
+    stats2,
+    away_stats,
+    "over25"
+)
 
-    btts_2 = confidence_score(
-        stats2,
-        away_stats,
-        "btts"
-    )
+btts_1 = confidence_score(
+    stats1,
+    home_stats,
+    "btts"
+)
 
-    over15_conf = round((over15_1 + over15_2) / 2)
-    over25_conf = round((over25_1 + over25_2) / 2)
+btts_2 = confidence_score(
+    stats2,
+    away_stats,
+    "btts"
+)
 
-    # BTTS needs both teams to contribute to the signal
-    btts_conf = round((btts_1 + btts_2) / 2)
+over15_conf = round(
+    (over15_1 + over15_2) / 2
+)
 
-    # Small adjustment based on goal environment
-    if combined >= 3.0:
-        over15_conf = min(90, over15_conf + 4)
-        over25_conf = min(90, over25_conf + 3)
+over25_conf = round(
+    (over25_1 + over25_2) / 2
+)
 
-    if combined < 2.0:
-        over15_conf = max(0, over15_conf - 5)
-        over25_conf = max(0, over25_conf - 7)
+# BTTS requires both teams to contribute
+btts_conf = round(
+    (btts_1 + btts_2) / 2
+)
 
-    markets = {
-        "Over 1.5 Goals": over15_conf,
-        "Over 2.5 Goals": over25_conf,
-        "BTTS — Yes": btts_conf
-    }
+# --------------------------------------------------------
+# ADDITIONAL MARKET SIGNALS
+# --------------------------------------------------------
 
-    primary_market = max(
-        markets,
-        key=markets.get
-    )
+# Team to score
+home_score_conf = round(
+    (
+        stats1["scoring_consistency"]
+        + (home_stats["scoring_consistency"] if home_stats else stats1["scoring_consistency"])
+    ) / 2
+)
 
-    primary_conf = markets[primary_market]
+away_score_conf = round(
+    (
+        stats2["scoring_consistency"]
+        + (away_stats["scoring_consistency"] if away_stats else stats2["scoring_consistency"])
+    ) / 2
+)
+
+# Goal environment adjustment
+if combined >= 3.0:
+    over15_conf = min(90, over15_conf + 4)
+    over25_conf = min(90, over25_conf + 3)
+
+elif combined < 2.0:
+    over15_conf = max(0, over15_conf - 5)
+    over25_conf = max(0, over25_conf - 7)
+
+# --------------------------------------------------------
+# MARKET LIST
+# --------------------------------------------------------
+
+markets = {
+    "Over 1.5 Goals": over15_conf,
+    "Over 2.5 Goals": over25_conf,
+    "BTTS — Yes": btts_conf,
+f"{team1_name} to Score": home_score_conf,
+f"{team2_name} to Score": away_score_conf
+}
+
+primary_market = max(
+    markets,
+    key=markets.get
+)
+
+primary_conf = markets[primary_market] 
 
     # Form
     form1 = form_string(records1)
