@@ -44,10 +44,12 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
 
 def start_health_server():
     port = int(os.environ.get("PORT", 10000))
+
     server = http.server.HTTPServer(
         ("0.0.0.0", port),
         HealthHandler
     )
+
     server.serve_forever()
 
 
@@ -177,21 +179,16 @@ def calculate_stats(fixtures, team_id):
         valid_games += 1
 
         if team_id == home_id:
-
             gf = home_goals
             ga = away_goals
-
         else:
-
             gf = away_goals
             ga = home_goals
 
         if gf > ga:
             wins += 1
-
         elif gf == ga:
             draws += 1
-
         else:
             losses += 1
 
@@ -233,7 +230,6 @@ def calculate_stats(fixtures, team_id):
 
     return {
         "games": valid_games,
-
         "wins": wins,
         "draws": draws,
         "losses": losses,
@@ -389,17 +385,9 @@ def evidence_quality(rate, sample_size):
         return "VERY LIMITED — 2 MATCHES"
 
     if sample_size == 3:
-
-        if rate >= 80:
-            return "LIMITED — 3 MATCHES"
-
         return "LIMITED — 3 MATCHES"
 
     if sample_size == 4:
-
-        if rate >= 80:
-            return "MODERATE — 4 MATCHES"
-
         return "MODERATE — 4 MATCHES"
 
     if sample_size >= 5:
@@ -472,30 +460,6 @@ def calculate_market_analysis(home_stats, away_stats):
 
 
 # =========================================================
-# SAMPLE WEIGHT
-# =========================================================
-
-def sample_weight(games):
-
-    if games <= 0:
-        return 0
-
-    if games == 1:
-        return 0.25
-
-    if games == 2:
-        return 0.40
-
-    if games == 3:
-        return 0.55
-
-    if games == 4:
-        return 0.75
-
-    return 1.00
-
-
-# =========================================================
 # ADD SUPPORT
 # =========================================================
 
@@ -538,6 +502,7 @@ def calculate_signal(
             if home_home["scored"] >= 80:
 
                 raw_score += 2
+
                 add_support(
                     support,
                     "Home team scored in "
@@ -552,6 +517,7 @@ def calculate_signal(
             elif home_home["scored"] >= 60:
 
                 raw_score += 1
+
                 add_support(
                     support,
                     "Home team scored in "
@@ -624,6 +590,16 @@ def calculate_signal(
                 "Home team averages "
                 + str(home_stat["shots_on_target"])
                 + " shots on target",
+                1
+            )
+
+        if home_home["clean_sheets"] <= 20 and games >= 2:
+
+            raw_score += 1
+
+            add_support(
+                support,
+                "Home scoring environment shows limited clean-sheet resistance",
                 1
             )
 
@@ -724,6 +700,16 @@ def calculate_signal(
                 "Away team averages "
                 + str(away_stat["shots_on_target"])
                 + " shots on target",
+                1
+            )
+
+        if home_home["clean_sheets"] <= 20 and home_home["games"] >= 2:
+
+            raw_score += 1
+
+            add_support(
+                support,
+                "Home team has a limited clean-sheet rate",
                 1
             )
 
@@ -1002,8 +988,48 @@ def calculate_signal(
                 1
             )
 
+        if home_home["avg_goals"] + away_away["avg_goals"] >= 2.5:
+
+            raw_score += 1
+
+            add_support(
+                support,
+                "Combined scoring averages are "
+                + str(
+                    round(
+                        home_home["avg_goals"]
+                        + away_away["avg_goals"],
+                        2
+                    )
+                )
+                + " goals",
+                1
+            )
+
     # =====================================================
-    # SAMPLE WEIGHTING
+    # SCORE NORMALIZATION
+    # =====================================================
+
+    # The score is an internal historical signal score.
+    # It is NOT a probability.
+    #
+    # We no longer multiply the score by a severe
+    # sample-size weight. Sample size is handled through
+    # the evidence label and caution message instead.
+
+    if raw_score < 0:
+        raw_score = 0
+
+    if raw_score > 10:
+        raw_score = 10
+
+    signal_score = round(
+        raw_score,
+        1
+    )
+
+    # =====================================================
+    # SAMPLE WARNING
     # =====================================================
 
     sample_sizes = [
@@ -1027,25 +1053,6 @@ def calculate_signal(
 
         average_sample = 0
 
-    weight = sample_weight(
-        round(average_sample)
-    )
-
-    weighted_score = round(
-        raw_score * weight,
-        1
-    )
-
-    if weighted_score < 0:
-        weighted_score = 0
-
-    if weighted_score > 10:
-        weighted_score = 10
-
-    # =====================================================
-    # SAMPLE WARNING
-    # =====================================================
-
     if average_sample < 3:
 
         caution.append(
@@ -1059,7 +1066,7 @@ def calculate_signal(
         )
 
     return {
-        "score": weighted_score,
+        "score": signal_score,
         "raw_score": raw_score,
         "support": support,
         "caution": caution,
@@ -1803,7 +1810,43 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         + "/10\n"
         "📈 Historical hit rate: "
         + str(rates[top_key])
-        + "%\n\n"
+        + "%\n"
+    )
+
+    if top_key == "home_to_score":
+
+        message += (
+            "📋 Historical record: "
+            + record_text(
+                rates[top_key],
+                home_home["games"]
+            )
+            + "\n"
+        )
+
+    elif top_key == "away_to_score":
+
+        message += (
+            "📋 Historical record: "
+            + record_text(
+                rates[top_key],
+                away_away["games"]
+            )
+            + "\n"
+        )
+
+    else:
+
+        message += (
+            "📋 Historical sample: "
+            + str(combined_sample)
+            + " matches per side where available\n"
+        )
+
+    message += (
+        "\n📊 Evidence: "
+        + evidence[top_key]
+        + "\n\n"
 
         "✅ SUPPORTING FACTORS\n"
     )
@@ -1854,8 +1897,12 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "probabilities of the next match.\n\n"
 
         "The signal score combines multiple historical "
-        "factors and applies a sample-size adjustment. "
-        "It is not a guaranteed prediction.\n\n"
+        "factors. It is an internal historical screening "
+        "score, not a guaranteed prediction or probability.\n\n"
+
+        "Small samples such as 2/2 or 3/3 can look strong "
+        "but have limited evidence. Larger samples provide "
+        "more historical support.\n\n"
 
         "Data uses the 2024 season because the current "
         "API plan does not provide the current 2026 "
