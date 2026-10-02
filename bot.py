@@ -37,19 +37,24 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"GoalLogic AI is running.")
+        self.wfile.write(
+            b"GoalLogic AI is running."
+        )
 
     def log_message(self, format, *args):
         return
 
 
 def start_health_server():
+
     server = ThreadingHTTPServer(
         ("0.0.0.0", PORT),
         HealthHandler
     )
 
-    print(f"GoalLogic AI is running on port {PORT}.")
+    print(
+        f"GoalLogic AI is running on port {PORT}."
+    )
 
     server.serve_forever()
 
@@ -59,9 +64,12 @@ def start_health_server():
 # ============================================================
 
 def openfoot_headers():
+
     return {
         "Accept": "application/json",
-        "Authorization": f"Bearer {OPENFOOT_API_KEY}",
+        "Authorization": (
+            f"Bearer {OPENFOOT_API_KEY}"
+        ),
     }
 
 
@@ -70,6 +78,7 @@ def openfoot_get(endpoint, params=None):
     url = f"{OPENFOOT_BASE}{endpoint}"
 
     try:
+
         response = requests.get(
             url,
             headers=openfoot_headers(),
@@ -78,23 +87,30 @@ def openfoot_get(endpoint, params=None):
         )
 
         if response.status_code != 200:
+
             print(
                 "OpenFoot error:",
                 response.status_code,
                 response.text
             )
+
             return None
 
         payload = response.json()
 
         if "error" in payload:
+
             print(
                 "OpenFoot API error:",
                 payload["error"]
             )
+
             return None
 
-        return payload.get("data", [])
+        return payload.get(
+            "data",
+            []
+        )
 
     except Exception as e:
 
@@ -121,8 +137,14 @@ def search_team(team_name):
         return None
 
     if isinstance(data, dict):
-        results = data.get("teams", [])
+
+        results = data.get(
+            "teams",
+            []
+        )
+
     else:
+
         results = data
 
     if not isinstance(results, list):
@@ -136,23 +158,31 @@ def search_team(team_name):
     for team in results:
 
         name = str(
-            team.get("name", "")
+            team.get(
+                "name",
+                ""
+            )
         ).lower().strip()
 
         if name == team_name_lower:
+
             return team
 
     # Partial match
     for team in results:
 
         name = str(
-            team.get("name", "")
+            team.get(
+                "name",
+                ""
+            )
         ).lower()
 
         if (
             team_name_lower in name
             or name in team_name_lower
         ):
+
             return team
 
     return results[0] if results else None
@@ -176,11 +206,14 @@ def get_team_matches(team_id):
         return []
 
     if isinstance(data, dict):
+
         matches = data.get(
             "matches",
             []
         )
+
     else:
+
         matches = data
 
     if not isinstance(matches, list):
@@ -202,6 +235,7 @@ def get_team_matches(team_id):
             "completed",
             "ft",
         ]:
+
             finished.append(match)
 
     finished.sort(
@@ -222,10 +256,12 @@ def get_team_matches(team_id):
 # ============================================================
 
 def get_team_id(team):
+
     return team.get("id")
 
 
 def get_team_name(team):
+
     return team.get(
         "name",
         "Unknown"
@@ -265,11 +301,13 @@ def extract_score(match):
             )
 
     if home_score is None:
+
         home_score = match.get(
             "homeScore"
         )
 
     if away_score is None:
+
         away_score = match.get(
             "awayScore"
         )
@@ -325,6 +363,7 @@ def build_team_records(
             home_score is None
             or away_score is None
         ):
+
             continue
 
         if str(home_id) == str(team_id):
@@ -340,6 +379,7 @@ def build_team_records(
             venue = "away"
 
         else:
+
             continue
 
         total_goals = (
@@ -348,12 +388,15 @@ def build_team_records(
         )
 
         if goals_for > goals_against:
+
             result = "W"
 
         elif goals_for == goals_against:
+
             result = "D"
 
         else:
+
             result = "L"
 
         records.append(
@@ -465,15 +508,33 @@ def calculate_stats(records):
         "avg_total": (
             goals_for + goals_against
         ) / total,
-        "over05": over_05 / total * 100,
-        "over15": over_15 / total * 100,
-        "over25": over_25 / total * 100,
-        "under35": under_35 / total * 100,
-        "btts": btts / total * 100,
-        "clean": clean_sheets / total * 100,
-        "scoring": scoring / total * 100,
-        "conceding": conceding / total * 100,
-        "two_to_four": two_to_four / total * 100,
+        "over05": (
+            over_05 / total * 100
+        ),
+        "over15": (
+            over_15 / total * 100
+        ),
+        "over25": (
+            over_25 / total * 100
+        ),
+        "under35": (
+            under_35 / total * 100
+        ),
+        "btts": (
+            btts / total * 100
+        ),
+        "clean": (
+            clean_sheets / total * 100
+        ),
+        "scoring": (
+            scoring / total * 100
+        ),
+        "conceding": (
+            conceding / total * 100
+        ),
+        "two_to_four": (
+            two_to_four / total * 100
+        ),
     }
 
 
@@ -482,6 +543,7 @@ def calculate_stats(records):
 # ============================================================
 
 def form_string(records):
+
     return "".join(
         r["result"]
         for r in records
@@ -493,6 +555,7 @@ def form_string(records):
 # ============================================================
 
 def pct(value):
+
     return f"{value:.0f}%"
 
 
@@ -510,24 +573,31 @@ def attacking_profile(
         return ""
 
     if overall["avg_for"] >= 1.8:
+
         attack_level = "🔥 STRONG"
 
     elif overall["avg_for"] >= 1.3:
+
         attack_level = "🟢 GOOD"
 
     elif overall["avg_for"] >= 1.0:
+
         attack_level = "🟡 MODERATE"
 
     else:
+
         attack_level = "🔴 LOW"
 
     if overall["avg_against"] >= 1.7:
+
         vulnerability = "⚠️ HIGH"
 
     elif overall["avg_against"] >= 1.2:
+
         vulnerability = "🟡 MODERATE"
 
     else:
+
         vulnerability = "🟢 LOW"
 
     text = (
@@ -572,15 +642,19 @@ def defensive_profile(
         return ""
 
     if overall["avg_against"] <= 0.8:
+
         defense_level = "🛡️ STRONG"
 
     elif overall["avg_against"] <= 1.2:
+
         defense_level = "🟢 GOOD"
 
     elif overall["avg_against"] <= 1.7:
+
         defense_level = "🟡 MODERATE"
 
     else:
+
         defense_level = "🔴 VULNERABLE"
 
     text = (
@@ -635,15 +709,19 @@ def goal_environment(
     )
 
     if combined >= 3.0:
+
         level = "🔥 HIGH"
 
     elif combined >= 2.5:
+
         level = "🟢 GOOD"
 
     elif combined >= 2.0:
+
         level = "🟡 MODERATE"
 
     else:
+
         level = "🔴 LOW"
 
     return (
@@ -668,6 +746,7 @@ def confidence_score(
         return 0
 
     if market == "over05":
+
         overall_signal = overall["over05"]
 
         venue_signal = (
@@ -677,6 +756,7 @@ def confidence_score(
         )
 
     elif market == "over15":
+
         overall_signal = overall["over15"]
 
         venue_signal = (
@@ -686,6 +766,7 @@ def confidence_score(
         )
 
     elif market == "over25":
+
         overall_signal = overall["over25"]
 
         venue_signal = (
@@ -695,6 +776,7 @@ def confidence_score(
         )
 
     elif market == "under35":
+
         overall_signal = overall["under35"]
 
         venue_signal = (
@@ -704,6 +786,7 @@ def confidence_score(
         )
 
     elif market == "btts":
+
         overall_signal = overall["btts"]
 
         venue_signal = (
@@ -713,6 +796,7 @@ def confidence_score(
         )
 
     elif market == "score":
+
         overall_signal = overall["scoring"]
 
         venue_signal = (
@@ -722,6 +806,7 @@ def confidence_score(
         )
 
     elif market == "two_to_four":
+
         overall_signal = overall["two_to_four"]
 
         venue_signal = (
@@ -731,6 +816,7 @@ def confidence_score(
         )
 
     else:
+
         return 0
 
     # --------------------------------------------------------
@@ -742,21 +828,27 @@ def confidence_score(
         sample = venue["sample"]
 
         if sample >= 7:
+
             reliability = 100
 
         elif sample >= 5:
+
             reliability = 90
 
         elif sample >= 3:
+
             reliability = 75
 
         elif sample >= 2:
+
             reliability = 60
 
         else:
+
             reliability = 40
 
     else:
+
         reliability = 50
 
     # --------------------------------------------------------
@@ -769,18 +861,23 @@ def confidence_score(
     )
 
     if difference <= 10:
+
         agreement = 100
 
     elif difference <= 20:
+
         agreement = 85
 
     elif difference <= 30:
+
         agreement = 70
 
     elif difference <= 40:
+
         agreement = 55
 
     else:
+
         agreement = 40
 
     # --------------------------------------------------------
@@ -801,44 +898,53 @@ def confidence_score(
     if venue:
 
         if market == "over05":
+
             counter_signal = (
                 venue["over05"] < 50
             )
 
         elif market == "over15":
+
             counter_signal = (
                 venue["over15"] < 50
             )
 
         elif market == "over25":
+
             counter_signal = (
                 venue["over25"] < 50
             )
 
         elif market == "under35":
+
             counter_signal = (
                 venue["under35"] < 50
             )
 
         elif market == "btts":
+
             counter_signal = (
                 venue["btts"] < 50
             )
 
         elif market == "score":
+
             counter_signal = (
                 venue["scoring"] < 50
             )
 
         elif market == "two_to_four":
+
             counter_signal = (
                 venue["two_to_four"] < 50
             )
 
         else:
+
             counter_signal = False
 
         if counter_signal:
+
             confidence -= 8
 
     # --------------------------------------------------------
@@ -848,30 +954,35 @@ def confidence_score(
     if venue:
 
         if venue["sample"] < 3:
+
             confidence = min(
                 confidence,
                 75
             )
 
         elif venue["sample"] < 5:
+
             confidence = min(
                 confidence,
                 82
             )
 
         elif venue["sample"] < 7:
+
             confidence = min(
                 confidence,
                 86
             )
 
         else:
+
             confidence = min(
                 confidence,
                 90
             )
 
     else:
+
         confidence = min(
             confidence,
             80
@@ -886,18 +997,140 @@ def confidence_score(
 
 
 # ============================================================
+# SMART MARKET SELECTION ENGINE
+# ============================================================
+
+def market_priority_score(
+    market,
+    confidence
+):
+
+    """
+    Confidence is not the only factor.
+
+    This function gives each market a usefulness
+    adjustment so that very broad markets such as
+    Over 0.5 do not automatically become the primary
+    signal.
+    """
+
+    priority_adjustments = {
+
+        # Broad market.
+        # Still displayed, but less useful as the
+        # primary statistical signal.
+        "Over 0.5 Goals": -12,
+
+        # Strong general goal market.
+        "Over 1.5 Goals": -2,
+
+        # Useful goal market.
+        "Over 2.5 Goals": 0,
+
+        # Useful defensive/goal-control market.
+        "Under 3.5 Goals": 0,
+
+        # Useful attacking market.
+        "BTTS — Yes": 0,
+
+        # Team scoring markets.
+        # Small neutral adjustment.
+        "2–4 Total Goals": -1,
+    }
+
+    adjustment = priority_adjustments.get(
+        market,
+        0
+    )
+
+    score = (
+        confidence
+        + adjustment
+    )
+
+    return max(
+        0,
+        score
+    )
+
+
+def market_selection(markets):
+
+    """
+    Rank markets using both confidence and
+    market usefulness.
+    """
+
+    scored_markets = []
+
+    for market, confidence in markets.items():
+
+        selection_score = (
+            market_priority_score(
+                market,
+                confidence
+            )
+        )
+
+        scored_markets.append(
+            {
+                "market": market,
+                "confidence": confidence,
+                "score": selection_score,
+            }
+        )
+
+    scored_markets.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    primary = (
+        scored_markets[0]
+        if scored_markets
+        else None
+    )
+
+    secondary = (
+        scored_markets[1]
+        if len(scored_markets) > 1
+        else None
+    )
+
+    return primary, secondary
+
+
+def get_risk_flags(markets):
+
+    risks = []
+
+    for market, confidence in markets.items():
+
+        if confidence < 60:
+
+            risks.append(
+                f"{market} ({confidence}%)"
+            )
+
+    return risks
+
+
+# ============================================================
 # GRADING
 # ============================================================
 
 def grade(confidence):
 
     if confidence >= 80:
+
         return "🔥 STRONG"
 
     elif confidence >= 70:
+
         return "🟢 GOOD"
 
     elif confidence >= 60:
+
         return "🟡 MODERATE"
 
     return "🔴 AVOID"
@@ -906,9 +1139,11 @@ def grade(confidence):
 def advice(confidence):
 
     if confidence >= 70:
+
         return "BET"
 
     elif confidence >= 60:
+
         return "CAUTION"
 
     return "AVOID"
@@ -933,24 +1168,30 @@ def market_reason(
     if market == "Over 0.5 Goals":
 
         if stats1["over05"] >= 80:
+
             reasons.append(
                 f"{team1_name} had goals in "
-                f"{stats1['over05']:.0f}% of recent matches"
+                f"{stats1['over05']:.0f}% "
+                f"of recent matches"
             )
 
         if stats2["over05"] >= 80:
+
             reasons.append(
                 f"{team2_name} had goals in "
-                f"{stats2['over05']:.0f}% of recent matches"
+                f"{stats2['over05']:.0f}% "
+                f"of recent matches"
             )
 
         if venue1 and venue1["over05"] >= 80:
+
             reasons.append(
                 f"recent home Over 0.5 rate is "
                 f"{venue1['over05']:.0f}%"
             )
 
         if venue2 and venue2["over05"] >= 80:
+
             reasons.append(
                 f"recent away Over 0.5 rate is "
                 f"{venue2['over05']:.0f}%"
@@ -959,6 +1200,7 @@ def market_reason(
     elif market == "Over 1.5 Goals":
 
         if stats1["over15"] >= 80:
+
             reasons.append(
                 f"{team1_name} has a "
                 f"{stats1['over15']:.0f}% recent "
@@ -966,6 +1208,7 @@ def market_reason(
             )
 
         if stats2["over15"] >= 80:
+
             reasons.append(
                 f"{team2_name} has a "
                 f"{stats2['over15']:.0f}% recent "
@@ -980,12 +1223,14 @@ def market_reason(
         )
 
         if combined >= 2.5:
+
             reasons.append(
                 f"combined recent goal average "
                 f"is {combined:.1f}"
             )
 
         if venue1 and venue1["over15"] < 50:
+
             reasons.append(
                 f"{team1_name} home Over 1.5 "
                 f"rate is only "
@@ -994,6 +1239,7 @@ def market_reason(
             )
 
         if venue2 and venue2["over15"] < 50:
+
             reasons.append(
                 f"{team2_name} away Over 1.5 "
                 f"rate is only "
@@ -1004,6 +1250,7 @@ def market_reason(
     elif market == "Over 2.5 Goals":
 
         if stats1["over25"] >= 70:
+
             reasons.append(
                 f"{team1_name} has a "
                 f"{stats1['over25']:.0f}% recent "
@@ -1011,6 +1258,7 @@ def market_reason(
             )
 
         if stats2["over25"] >= 70:
+
             reasons.append(
                 f"{team2_name} has a "
                 f"{stats2['over25']:.0f}% recent "
@@ -1025,12 +1273,14 @@ def market_reason(
         )
 
         if combined >= 2.8:
+
             reasons.append(
                 f"combined recent goal average "
                 f"is {combined:.1f}"
             )
 
         if venue1 and venue1["over25"] < 50:
+
             reasons.append(
                 f"{team1_name} home Over 2.5 "
                 f"rate is only "
@@ -1039,6 +1289,7 @@ def market_reason(
             )
 
         if venue2 and venue2["over25"] < 50:
+
             reasons.append(
                 f"{team2_name} away Over 2.5 "
                 f"rate is only "
@@ -1049,6 +1300,7 @@ def market_reason(
     elif market == "Under 3.5 Goals":
 
         if stats1["under35"] >= 70:
+
             reasons.append(
                 f"{team1_name} stayed under "
                 f"3.5 goals in "
@@ -1057,6 +1309,7 @@ def market_reason(
             )
 
         if stats2["under35"] >= 70:
+
             reasons.append(
                 f"{team2_name} stayed under "
                 f"3.5 goals in "
@@ -1065,6 +1318,7 @@ def market_reason(
             )
 
         if venue1 and venue1["under35"] < 50:
+
             reasons.append(
                 f"{team1_name} home Under 3.5 "
                 f"rate is only "
@@ -1073,6 +1327,7 @@ def market_reason(
             )
 
         if venue2 and venue2["under35"] < 50:
+
             reasons.append(
                 f"{team2_name} away Under 3.5 "
                 f"rate is only "
@@ -1083,6 +1338,7 @@ def market_reason(
     elif market == "BTTS — Yes":
 
         if stats1["scoring"] >= 80:
+
             reasons.append(
                 f"{team1_name} scores in "
                 f"{stats1['scoring']:.0f}% "
@@ -1090,6 +1346,7 @@ def market_reason(
             )
 
         if stats2["scoring"] >= 80:
+
             reasons.append(
                 f"{team2_name} scores in "
                 f"{stats2['scoring']:.0f}% "
@@ -1097,18 +1354,21 @@ def market_reason(
             )
 
         if venue1 and venue1["btts"] >= 70:
+
             reasons.append(
                 f"recent home BTTS rate is "
                 f"{venue1['btts']:.0f}%"
             )
 
         if venue2 and venue2["btts"] >= 70:
+
             reasons.append(
                 f"recent away BTTS rate is "
                 f"{venue2['btts']:.0f}%"
             )
 
         if venue1 and venue1["clean"] >= 50:
+
             reasons.append(
                 f"{team1_name} recent home "
                 f"clean-sheet rate is "
@@ -1117,6 +1377,7 @@ def market_reason(
             )
 
         if venue2 and venue2["clean"] >= 50:
+
             reasons.append(
                 f"{team2_name} recent away "
                 f"clean-sheet rate is "
@@ -1133,12 +1394,14 @@ def market_reason(
         )
 
         if venue1:
+
             reasons.append(
                 f"recent home scoring rate is "
                 f"{venue1['scoring']:.0f}%"
             )
 
             if venue1["scoring"] < 50:
+
                 reasons.append(
                     "home scoring trend is a "
                     "counter-signal"
@@ -1153,12 +1416,14 @@ def market_reason(
         )
 
         if venue2:
+
             reasons.append(
                 f"recent away scoring rate is "
                 f"{venue2['scoring']:.0f}%"
             )
 
             if venue2["scoring"] < 50:
+
                 reasons.append(
                     "away scoring trend is a "
                     "counter-signal"
@@ -1167,6 +1432,7 @@ def market_reason(
     elif market == "2–4 Total Goals":
 
         if stats1["two_to_four"] >= 70:
+
             reasons.append(
                 f"{team1_name} had 2–4 total goals "
                 f"in {stats1['two_to_four']:.0f}% "
@@ -1174,6 +1440,7 @@ def market_reason(
             )
 
         if stats2["two_to_four"] >= 70:
+
             reasons.append(
                 f"{team2_name} had 2–4 total goals "
                 f"in {stats2['two_to_four']:.0f}% "
@@ -1181,18 +1448,21 @@ def market_reason(
             )
 
         if venue1 and venue1["two_to_four"] >= 70:
+
             reasons.append(
                 f"recent home 2–4 goal rate is "
                 f"{venue1['two_to_four']:.0f}%"
             )
 
         if venue2 and venue2["two_to_four"] >= 70:
+
             reasons.append(
                 f"recent away 2–4 goal rate is "
                 f"{venue2['two_to_four']:.0f}%"
             )
 
     if not reasons:
+
         reasons.append(
             "Recent statistics provide a mixed "
             "signal for this market"
@@ -1219,12 +1489,14 @@ def analyze_match(
     )
 
     if not team1:
+
         return (
             f"❌ I couldn't find "
             f"{team1_name} in OpenFoot."
         )
 
     if not team2:
+
         return (
             f"❌ I couldn't find "
             f"{team2_name} in OpenFoot."
@@ -1234,6 +1506,7 @@ def analyze_match(
     team2_id = get_team_id(team2)
 
     if not team1_id or not team2_id:
+
         return (
             "❌ Team information "
             "could not be resolved."
@@ -1269,6 +1542,7 @@ def analyze_match(
     )
 
     if not stats1 or not stats2:
+
         return (
             "⚠️ Football data could not "
             "be retrieved for both teams.\n"
@@ -1487,25 +1761,82 @@ def analyze_match(
     # MARKETS
     # --------------------------------------------------------
 
-    markets = {
-        "Over 0.5 Goals": over05_conf,
-        "Over 1.5 Goals": over15_conf,
-        "Over 2.5 Goals": over25_conf,
-        "Under 3.5 Goals": under35_conf,
-        "BTTS — Yes": btts_conf,
-        f"{get_team_name(team1)} to Score": score1_conf,
-        f"{get_team_name(team2)} to Score": score2_conf,
-        "2–4 Total Goals": range_conf,
-    }
-
-    primary_market = max(
-        markets,
-        key=markets.get
+    team1_display = get_team_name(
+        team1
     )
 
-    primary_conf = markets[
-        primary_market
-    ]
+    team2_display = get_team_name(
+        team2
+    )
+
+    markets = {
+
+        "Over 0.5 Goals":
+            over05_conf,
+
+        "Over 1.5 Goals":
+            over15_conf,
+
+        "Over 2.5 Goals":
+            over25_conf,
+
+        "Under 3.5 Goals":
+            under35_conf,
+
+        "BTTS — Yes":
+            btts_conf,
+
+        f"{team1_display} to Score":
+            score1_conf,
+
+        f"{team2_display} to Score":
+            score2_conf,
+
+        "2–4 Total Goals":
+            range_conf,
+    }
+
+    # --------------------------------------------------------
+    # SMART MARKET SELECTION
+    # --------------------------------------------------------
+
+    primary, secondary = (
+        market_selection(markets)
+    )
+
+    if primary:
+
+        primary_market = primary[
+            "market"
+        ]
+
+        primary_conf = primary[
+            "confidence"
+        ]
+
+    else:
+
+        primary_market = "No clear signal"
+        primary_conf = 0
+
+    if secondary:
+
+        secondary_market = secondary[
+            "market"
+        ]
+
+        secondary_conf = secondary[
+            "confidence"
+        ]
+
+    else:
+
+        secondary_market = None
+        secondary_conf = 0
+
+    risk_flags = get_risk_flags(
+        markets
+    )
 
     # --------------------------------------------------------
     # FORM
@@ -1522,14 +1853,14 @@ def analyze_match(
     if stats1["wins"] > stats2["wins"]:
 
         form_assessment = (
-            f"{get_team_name(team1)} "
+            f"{team1_display} "
             "has the stronger recent form."
         )
 
     elif stats2["wins"] > stats1["wins"]:
 
         form_assessment = (
-            f"{get_team_name(team2)} "
+            f"{team2_display} "
             "has the stronger recent form."
         )
 
@@ -1543,14 +1874,6 @@ def analyze_match(
     # ========================================================
     # RESPONSE
     # ========================================================
-
-    team1_display = get_team_name(
-        team1
-    )
-
-    team2_display = get_team_name(
-        team2
-    )
 
     output = (
         "⚽ GOALLOGIC AI — ADVANCED ANALYSIS\n\n"
@@ -1805,7 +2128,7 @@ def analyze_match(
         )
 
     # --------------------------------------------------------
-    # PRIMARY SIGNAL
+    # SMART PRIMARY SIGNAL
     # --------------------------------------------------------
 
     output += (
@@ -1816,6 +2139,54 @@ def analyze_match(
         f"{grade(primary_conf)}\n"
         f"Advice: "
         f"{advice(primary_conf)}\n\n"
+    )
+
+    # --------------------------------------------------------
+    # SECONDARY SIGNAL
+    # --------------------------------------------------------
+
+    if secondary_market:
+
+        output += (
+            "🥈 SECONDARY STATISTICAL SIGNAL\n"
+            f"{secondary_market} — "
+            f"Confidence {secondary_conf}%\n"
+            f"Grade: "
+            f"{grade(secondary_conf)}\n"
+            f"Advice: "
+            f"{advice(secondary_conf)}\n\n"
+        )
+
+    # --------------------------------------------------------
+    # RISK FLAGS
+    # --------------------------------------------------------
+
+    if risk_flags:
+
+        output += (
+            "⚠️ RISK FLAGS\n"
+        )
+
+        for risk in risk_flags[:4]:
+
+            output += (
+                f"• {risk}\n"
+            )
+
+        output += "\n"
+
+    else:
+
+        output += (
+            "✅ RISK FLAGS\n"
+            "No major low-confidence markets detected.\n\n"
+        )
+
+    # --------------------------------------------------------
+    # DISCLAIMER
+    # --------------------------------------------------------
+
+    output += (
         "⚠️ Statistical analysis is not a guarantee "
         "of the match outcome. Use confidence figures "
         "as indicators, not certainty."
@@ -1910,6 +2281,7 @@ async def normal_message(
         not update.message
         or not update.message.text
     ):
+
         return
 
     text = update.message.text.strip()
