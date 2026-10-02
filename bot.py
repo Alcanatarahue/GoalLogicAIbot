@@ -14,18 +14,11 @@ from telegram.ext import (
     filters,
 )
 
-# ============================================================
-# CONFIG
-# ============================================================
-
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENFOOT_API_KEY = os.getenv("OPENFOOT_API_KEY")
 
 OPENFOOT_BASE = "https://openfootapi.com"
 CURRENT_SEASON = "2026/27"
-
-# Premier League
-EPL_ID = "comp_premier_league_eng"
 
 MIN_MATCHES = 3
 RECENT_MATCHES = 5
@@ -62,34 +55,27 @@ def openfoot_get(endpoint, params=None):
         print("OPENFOOT_API_KEY is missing.")
         return []
 
-    url = OPENFOOT_BASE + endpoint
-
-    headers = {
-        "Accept": "application/json",
-        "Authorization": f"Bearer {OPENFOOT_API_KEY}",
-    }
-
     try:
-        print(f"OpenFoot GET: {url}")
-        print(f"Parameters: {params}")
-
         response = requests.get(
-            url,
-            headers=headers,
+            OPENFOOT_BASE + endpoint,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {OPENFOOT_API_KEY}",
+            },
             params=params or {},
             timeout=20,
         )
 
-        print(f"OpenFoot HTTP status: {response.status_code}")
+        print(f"OpenFoot {endpoint} -> HTTP {response.status_code}")
 
         try:
             body = response.json()
         except Exception:
-            print("OpenFoot returned non-JSON response.")
+            print("OpenFoot returned non-JSON.")
             return []
 
         if response.status_code != 200:
-            print(f"OpenFoot error: {body}")
+            print("OpenFoot error:", body)
             return []
 
         data = body.get("data", [])
@@ -100,33 +86,96 @@ def openfoot_get(endpoint, params=None):
         return []
 
     except Exception as e:
-        print(f"OpenFoot request error: {e}")
+        print("OpenFoot request error:", e)
         return []
 
 
+# ============================================================
+# TEAM DATABASE
+# ============================================================
+
+TEAM_IDS = {
+    "chelsea": "team_chelsea_eng",
+    "arsenal": "team_arsenal_eng",
+    "liverpool": "team_liverpool_eng",
+    "manchester city": "team_manchester_city_eng",
+    "man city": "team_manchester_city_eng",
+    "manchester united": "team_manchester_united_eng",
+    "man united": "team_manchester_united_eng",
+    "man utd": "team_manchester_united_eng",
+    "tottenham": "team_tottenham_eng",
+    "spurs": "team_tottenham_eng",
+    "newcastle": "team_newcastle_eng",
+    "aston villa": "team_aston_villa_eng",
+    "west ham": "team_west_ham_eng",
+    "everton": "team_everton_eng",
+    "crystal palace": "team_crystal_palace_eng",
+    "brighton": "team_brighton_eng",
+    "brentford": "team_brentford_eng",
+    "bournemouth": "team_bournemouth_eng",
+    "fulham": "team_fulham_eng",
+    "nottingham forest": "team_nottingham_forest_eng",
+    "sunderland": "team_sunderland_eng",
+    "leeds": "team_leeds_eng",
+}
+
+ALIASES = {
+    "chelsea fc": "chelsea",
+    "arsenal fc": "arsenal",
+    "liverpool fc": "liverpool",
+    "manchester city fc": "manchester city",
+    "manchester united fc": "manchester united",
+    "tottenham hotspur": "tottenham",
+    "tottenham hotspur fc": "tottenham",
+    "newcastle united": "newcastle",
+    "aston villa fc": "aston villa",
+    "west ham united": "west ham",
+    "everton fc": "everton",
+    "crystal palace fc": "crystal palace",
+    "brighton & hove albion": "brighton",
+    "brighton and hove albion": "brighton",
+    "brentford fc": "brentford",
+    "afc bournemouth": "bournemouth",
+    "fulham fc": "fulham",
+    "nottingham forest fc": "nottingham forest",
+    "sunderland afc": "sunderland",
+    "leeds united": "leeds",
+    "leeds united fc": "leeds",
+}
+
+
+def normalize_team(name):
+    name = name.strip().lower()
+    return re.sub(r"\s+", " ", name)
+
+
+def find_team_id(name):
+    key = normalize_team(name)
+
+    if key in TEAM_IDS:
+        return TEAM_IDS[key]
+
+    alias = ALIASES.get(key)
+
+    if alias:
+        return TEAM_IDS.get(alias)
+
+    return None
+
+
+# ============================================================
+# MATCH DATA
+# ============================================================
+
 def get_team_matches(team_id, team_name):
-    """
-    Direct team query.
-
-    This avoids the old method of downloading the entire
-    Premier League and then trying to filter Chelsea/Arsenal.
-    """
-
-    params = {
-        "team": team_id,
-        "season": CURRENT_SEASON,
-        "status": "finished",
-    }
-
-    print("")
-    print("======================================")
-    print(f"TEAM REQUEST: {team_name}")
-    print(f"Team ID: {team_id}")
-    print(f"Season: {CURRENT_SEASON}")
-    print("Status: finished")
-    print("======================================")
-
-    matches = openfoot_get("/v1/matches", params)
+    matches = openfoot_get(
+        "/v1/matches",
+        {
+            "team": team_id,
+            "season": CURRENT_SEASON,
+            "status": "finished",
+        },
+    )
 
     completed = []
 
@@ -145,7 +194,12 @@ def get_team_matches(team_id, team_name):
         home_score = score.get("home")
         away_score = score.get("away")
 
-        # Some API versions may expose scores differently.
+        if home_score is None:
+            home_score = score.get("homeGoals")
+
+        if away_score is None:
+            away_score = score.get("awayGoals")
+
         if home_score is None:
             home_score = match.get("homeScore")
 
@@ -155,1218 +209,896 @@ def get_team_matches(team_id, team_name):
         if home_score is None or away_score is None:
             continue
 
-        match["_home_score"] = int(home_score)
-        match["_away_score"] = int(away_score)
+        try:
+            match["_home_score"] = int(home_score)
+            match["_away_score"] = int(away_score)
+        except (TypeError, ValueError):
+            continue
+
+        match["_is_home"] = home_id == team_id
+
+        match["_kickoff"] = (
+            match.get("kickoffAt")
+            or match.get("kickoff")
+            or match.get("date")
+            or ""
+        )
 
         completed.append(match)
 
     completed.sort(
-        key=lambda x: x.get("kickoffAt", ""),
+        key=lambda x: x.get("_kickoff", ""),
         reverse=True
     )
 
     print(
-        f"{team_name}: {len(completed)} usable completed matches found."
+        f"{team_name}: {len(completed)} usable completed matches."
     )
 
     return completed
 
 
 # ============================================================
-# TEAM DATA
+# BASIC STATISTICS
 # ============================================================
 
-TEAM_DATABASE = {
-    "chelsea": {
-        "id": "team_chelsea_eng",
-        "name": "Chelsea",
-    },
-    "arsenal": {
-        "id": "team_arsenal_eng",
-        "name": "Arsenal",
-    },
-    "liverpool": {
-        "id": "team_liverpool_eng",
-        "name": "Liverpool",
-    },
-    "manchester city": {
-        "id": "team_manchester_city_eng",
-        "name": "Manchester City",
-    },
-    "man city": {
-        "id": "team_manchester_city_eng",
-        "name": "Manchester City",
-    },
-    "manchester united": {
-        "id": "team_manchester_united_eng",
-        "name": "Manchester United",
-    },
-    "man united": {
-        "id": "team_manchester_united_eng",
-        "name": "Manchester United",
-    },
-    "tottenham": {
-        "id": "team_tottenham_eng",
-        "name": "Tottenham Hotspur",
-    },
-    "spurs": {
-        "id": "team_tottenham_eng",
-        "name": "Tottenham Hotspur",
-    },
-    "newcastle": {
-        "id": "team_newcastle_eng",
-        "name": "Newcastle United",
-    },
-    "aston villa": {
-        "id": "team_aston_villa_eng",
-        "name": "Aston Villa",
-    },
-    "west ham": {
-        "id": "team_west_ham_eng",
-        "name": "West Ham United",
-    },
-    "everton": {
-        "id": "team_everton_eng",
-        "name": "Everton",
-    },
-    "crystal palace": {
-        "id": "team_crystal_palace_eng",
-        "name": "Crystal Palace",
-    },
-    "brighton": {
-        "id": "team_brighton_eng",
-        "name": "Brighton",
-    },
-    "brentford": {
-        "id": "team_brentford_eng",
-        "name": "Brentford",
-    },
-    "bournemouth": {
-        "id": "team_bournemouth_eng",
-        "name": "Bournemouth",
-    },
-    "fulham": {
-        "id": "team_fulham_eng",
-        "name": "Fulham",
-    },
-    "nottingham forest": {
-        "id": "team_nottingham_forest_eng",
-        "name": "Nottingham Forest",
-    },
-    "sunderland": {
-        "id": "team_sunderland_eng",
-        "name": "Sunderland",
-    },
-    "leeds": {
-        "id": "team_leeds_eng",
-        "name": "Leeds United",
-    },
-}
+def result_for(match):
+    home_score = match["_home_score"]
+    away_score = match["_away_score"]
+
+    if match["_is_home"]:
+        gf = home_score
+        ga = away_score
+    else:
+        gf = away_score
+        ga = home_score
+
+    if gf > ga:
+        result = "W"
+    elif gf < ga:
+        result = "L"
+    else:
+        result = "D"
+
+    return result, gf, ga
 
 
-def find_team(name):
-    cleaned = name.lower().strip()
+def calculate_stats(matches):
+    sample = matches[:RECENT_MATCHES]
 
-    if cleaned in TEAM_DATABASE:
-        return TEAM_DATABASE[cleaned]
-
-    # Partial matching
-    for key, team in TEAM_DATABASE.items():
-        if cleaned == key or key in cleaned:
-            return team
-
-    return None
-
-
-# ============================================================
-# MATCH STATISTICS
-# ============================================================
-
-def calculate_stats(matches, team_id):
-    matches = matches[:RECENT_MATCHES]
-
-    if not matches:
+    if not sample:
         return None
 
-    wins = 0
-    draws = 0
-    losses = 0
+    rows = [result_for(match) for match in sample]
 
-    goals_for = []
-    goals_against = []
+    results = [row[0] for row in rows]
+    goals_for = [row[1] for row in rows]
+    goals_against = [row[2] for row in rows]
 
-    over05 = 0
-    over15 = 0
-    over25 = 0
-    under35 = 0
-    btts = 0
+    totals = [
+        gf + ga
+        for gf, ga in zip(goals_for, goals_against)
+    ]
 
-    scoring = 0
-    clean_sheets = 0
-
-    home_matches = 0
-    away_matches = 0
-
-    venue_goals_for = []
-    venue_goals_against = []
-
-    venue_over05 = 0
-    venue_over15 = 0
-    venue_over25 = 0
-    venue_btts = 0
-    venue_scoring = 0
-    venue_clean = 0
-
-    for match in matches:
-        home = match.get("homeTeam") or {}
-        away = match.get("awayTeam") or {}
-
-        hs = match["_home_score"]
-        aws = match["_away_score"]
-
-        is_home = home.get("id") == team_id
-
-        if is_home:
-            gf = hs
-            ga = aws
-            home_matches += 1
-        else:
-            gf = aws
-            ga = hs
-            away_matches += 1
-
-        goals_for.append(gf)
-        goals_against.append(ga)
-
-        if gf > ga:
-            wins += 1
-        elif gf == ga:
-            draws += 1
-        else:
-            losses += 1
-
-        total = hs + aws
-
-        if total > 0:
-            over05 += 1
-
-        if total > 1:
-            over15 += 1
-
-        if total > 2:
-            over25 += 1
-
-        if total < 4:
-            under35 += 1
-
-        if hs > 0 and aws > 0:
-            btts += 1
-
-        if gf > 0:
-            scoring += 1
-
-        if ga == 0:
-            clean_sheets += 1
-
-        # Venue-specific statistics
-        if is_home:
-            venue_goals_for.append(gf)
-            venue_goals_against.append(ga)
-
-            if total > 0:
-                venue_over05 += 1
-
-            if total > 1:
-                venue_over15 += 1
-
-            if total > 2:
-                venue_over25 += 1
-
-            if hs > 0 and aws > 0:
-                venue_btts += 1
-
-            if gf > 0:
-                venue_scoring += 1
-
-            if ga == 0:
-                venue_clean += 1
-
-    n = len(matches)
+    count = len(sample)
 
     return {
-        "matches": n,
-        "wins": wins,
-        "draws": draws,
-        "losses": losses,
+        "sample": count,
+        "form": "".join(results),
+
+        "wins": results.count("W"),
+        "draws": results.count("D"),
+        "losses": results.count("L"),
 
         "gf": sum(goals_for),
         "ga": sum(goals_against),
 
         "avg_gf": mean(goals_for),
         "avg_ga": mean(goals_against),
-        "avg_total": mean(
-            [a + b for a, b in zip(
-                goals_for,
-                goals_against
-            )]
-        ),
+        "avg_total": mean(totals),
 
-        "over05": 100 * over05 / n,
-        "over15": 100 * over15 / n,
-        "over25": 100 * over25 / n,
-        "under35": 100 * under35 / n,
-        "btts": 100 * btts / n,
+        "over05": sum(x >= 1 for x in totals) / count * 100,
+        "over15": sum(x >= 2 for x in totals) / count * 100,
+        "over25": sum(x >= 3 for x in totals) / count * 100,
 
-        "scoring": 100 * scoring / n,
-        "clean": 100 * clean_sheets / n,
+        "under35": sum(x <= 3 for x in totals) / count * 100,
 
-        "home_matches": home_matches,
-        "away_matches": away_matches,
+        "btts": sum(
+            gf > 0 and ga > 0
+            for gf, ga in zip(goals_for, goals_against)
+        ) / count * 100,
 
-        "venue_gf": mean(venue_goals_for)
-        if venue_goals_for else None,
+        "scoring": sum(
+            gf > 0 for gf in goals_for
+        ) / count * 100,
 
-        "venue_ga": mean(venue_goals_against)
-        if venue_goals_against else None,
+        "clean": sum(
+            ga == 0 for ga in goals_against
+        ) / count * 100,
 
-        "venue_over05": 100 * venue_over05 / home_matches
-        if home_matches else None,
+        "wd": sum(
+            result in ("W", "D")
+            for result in results
+        ) / count * 100,
 
-        "venue_over15": 100 * venue_over15 / home_matches
-        if home_matches else None,
-
-        "venue_over25": 100 * venue_over25 / home_matches
-        if home_matches else None,
-
-        "venue_btts": 100 * venue_btts / home_matches
-        if home_matches else None,
-
-        "venue_scoring": 100 * venue_scoring / home_matches
-        if home_matches else None,
-
-        "venue_clean": 100 * venue_clean / home_matches
-        if home_matches else None,
+        "draw_rate": sum(
+            result == "D"
+            for result in results
+        ) / count * 100,
     }
 
 
-def calculate_away_stats(matches, team_id):
-    away_matches = []
+def venue_stats(matches, want_home):
+    selected = [
+        match
+        for match in matches
+        if match["_is_home"] == want_home
+    ]
 
-    for match in matches:
-        away = match.get("awayTeam") or {}
-
-        if away.get("id") == team_id:
-            away_matches.append(match)
-
-    if not away_matches:
-        return None
-
-    goals_for = []
-    goals_against = []
-
-    over05 = 0
-    over15 = 0
-    over25 = 0
-    btts = 0
-    scoring = 0
-    clean = 0
-
-    for match in away_matches:
-        hs = match["_home_score"]
-        aws = match["_away_score"]
-
-        gf = aws
-        ga = hs
-
-        goals_for.append(gf)
-        goals_against.append(ga)
-
-        total = hs + aws
-
-        if total > 0:
-            over05 += 1
-
-        if total > 1:
-            over15 += 1
-
-        if total > 2:
-            over25 += 1
-
-        if hs > 0 and aws > 0:
-            btts += 1
-
-        if gf > 0:
-            scoring += 1
-
-        if ga == 0:
-            clean += 1
-
-    n = len(away_matches)
-
-    return {
-        "matches": n,
-        "avg_gf": mean(goals_for),
-        "avg_ga": mean(goals_against),
-        "over05": 100 * over05 / n,
-        "over15": 100 * over15 / n,
-        "over25": 100 * over25 / n,
-        "btts": 100 * btts / n,
-        "scoring": 100 * scoring / n,
-        "clean": 100 * clean / n,
-    }
+    return calculate_stats(selected[:RECENT_MATCHES])
 
 
 # ============================================================
-# FORM
+# CALIBRATED CONFIDENCE SYSTEM
 # ============================================================
 
-def form_string(matches, team_id):
-    form = []
+def sample_weight(sample):
+    if sample <= 0:
+        return 0.0
 
-    for match in matches[:5]:
-        home = match.get("homeTeam") or {}
+    if sample == 1:
+        return 0.45
 
-        hs = match["_home_score"]
-        aws = match["_away_score"]
+    if sample == 2:
+        return 0.65
 
-        if home.get("id") == team_id:
-            gf = hs
-            ga = aws
-        else:
-            gf = aws
-            ga = hs
+    if sample == 3:
+        return 0.78
 
-        if gf > ga:
-            form.append("W")
-        elif gf == ga:
-            form.append("D")
-        else:
-            form.append("L")
+    if sample == 4:
+        return 0.90
 
-    return "".join(form)
+    return 1.00
 
 
-# ============================================================
-# CONFIDENCE ENGINE
-# ============================================================
-
-def clamp(value, low=5, high=95):
-    return max(low, min(high, round(value)))
-
-
-def confidence_over05(a, b, home_a, away_b):
-    values = [
-        a["over05"],
-        b["over05"],
-    ]
-
-    if home_a:
-        values.append(home_a["over05"])
-
-    if away_b:
-        values.append(away_b["over05"])
-
-    return clamp(mean(values))
-
-
-def confidence_over15(a, b, home_a, away_b):
-    values = [
-        a["over15"],
-        b["over15"],
-    ]
-
-    if home_a:
-        values.append(home_a["over15"])
-
-    if away_b:
-        values.append(away_b["over15"])
-
-    goal_environment = (
-        a["avg_total"] + b["avg_total"]
-    ) / 2
-
-    confidence = mean(values) * 0.75
-
-    if goal_environment >= 2.8:
-        confidence += 10
-    elif goal_environment >= 2.4:
-        confidence += 5
-
-    return clamp(confidence)
-
-
-def confidence_over25(a, b, home_a, away_b):
-    values = [
-        a["over25"],
-        b["over25"],
-    ]
-
-    if home_a:
-        values.append(home_a["over25"])
-
-    if away_b:
-        values.append(away_b["over25"])
-
-    confidence = mean(values) * 0.75
-
-    combined = (
-        a["avg_total"] + b["avg_total"]
-    ) / 2
-
-    if combined >= 3.2:
-        confidence += 10
-    elif combined >= 2.8:
-        confidence += 5
-    elif combined < 2.2:
-        confidence -= 8
-
-    return clamp(confidence)
-
-
-def confidence_under35(a, b, home_a, away_b):
-    values = [
-        a["under35"],
-        b["under35"],
-    ]
-
-    if home_a:
-        values.append(
-            100 - home_a["over25"]
-        )
-
-    if away_b:
-        values.append(
-            100 - away_b["over25"]
-        )
-
-    confidence = mean(values) * 0.85
-
-    combined = (
-        a["avg_total"] + b["avg_total"]
-    ) / 2
-
-    if combined <= 2.5:
-        confidence += 8
-    elif combined >= 3.5:
-        confidence -= 10
-
-    return clamp(confidence)
-
-
-def confidence_btts(a, b, home_a, away_b):
-    values = [
-        a["btts"],
-        b["btts"],
-    ]
-
-    if home_a:
-        values.append(home_a["btts"])
-
-    if away_b:
-        values.append(away_b["btts"])
-
-    scoring_strength = mean([
-        a["scoring"],
-        b["scoring"],
-    ])
-
-    confidence = mean(values) * 0.65
-
-    if scoring_strength >= 80:
-        confidence += 12
-
-    # Strong clean-sheet teams reduce BTTS
-    clean_strength = mean([
-        a["clean"],
-        b["clean"],
-    ])
-
-    if clean_strength >= 55:
-        confidence -= 10
-
-    return clamp(confidence)
-
-
-def confidence_team_score(team_stats, opponent_stats, venue_stats):
-    values = [
-        team_stats["scoring"],
-        100 - opponent_stats["clean"],
-    ]
-
-    if venue_stats:
-        values.append(venue_stats["scoring"])
-
-    return clamp(mean(values))
-
-
-# ============================================================
-# DOUBLE CHANCE
-# ============================================================
-
-def confidence_double_chance(
-    home_stats,
-    away_stats,
-    home_venue,
-    away_venue,
+def confidence_from_base(
+    base,
+    support=0,
+    counter=0,
+    sample=5
 ):
     """
-    Calculates 1X, X2 and 12 from recent W/D/L form.
+    Converts raw statistical percentages into a more conservative
+    confidence figure.
 
-    Home venue and away venue data receive extra weight when
-    available, but tiny samples are not allowed to dominate.
+    Small samples are automatically discounted.
+    Confidence is capped below 90% so the bot does not imply certainty.
     """
 
-    home_total = home_stats["matches"]
-    away_total = away_stats["matches"]
+    weight = sample_weight(sample)
 
-    home_win = home_stats["wins"] / home_total * 100
-    home_draw = home_stats["draws"] / home_total * 100
+    adjusted = 50 + ((base - 50) * 0.55 * weight)
 
-    away_win = away_stats["wins"] / away_total * 100
-    away_draw = away_stats["draws"] / away_total * 100
+    adjusted += support * 0.15
+    adjusted -= counter * 0.15
 
-    # Recent overall probabilities
-    one_x_base = home_win + home_draw
-    x_two_base = away_win + away_draw
-    twelve_base = 100 - (
-        (
-            home_draw +
-            away_draw
-        ) / 2
+    return round(
+        max(52, min(88, adjusted))
     )
 
-    # Venue adjustment
-    one_x = one_x_base
-
-    if home_venue and home_venue["matches"] >= 2:
-        venue_one_x = (
-            home_venue["wins"] +
-            home_venue["draws"]
-        ) / home_venue["matches"] * 100
-
-        one_x = (
-            one_x_base * 0.65 +
-            venue_one_x * 0.35
-        )
-
-    x_two = x_two_base
-
-    if away_venue and away_venue["matches"] >= 2:
-        venue_x_two = (
-            away_venue["wins"] +
-            away_venue["draws"]
-        ) / away_venue["matches"] * 100
-
-        x_two = (
-            x_two_base * 0.65 +
-            venue_x_two * 0.35
-        )
-
-    # 12 uses draw avoidance from both teams
-    twelve = twelve_base
-
-    return {
-        "1X": clamp(one_x),
-        "X2": clamp(x_two),
-        "12": clamp(twelve),
-    }
-
-
-# ============================================================
-# GRADING
-# ============================================================
 
 def grade(confidence):
-    if confidence >= 80:
-        return "🔥 STRONG", "BET"
-    if confidence >= 70:
-        return "🟢 GOOD", "BET"
-    if confidence >= 60:
-        return "🟡 MODERATE", "CAUTION"
-    return "🔴 WEAK", "AVOID"
+    if confidence >= 78:
+        return "🔥 STRONG"
+
+    if confidence >= 68:
+        return "🟢 GOOD"
+
+    if confidence >= 58:
+        return "🟡 MODERATE"
+
+    return "🔴 WEAK"
+
+
+def advice(confidence):
+    if confidence >= 68:
+        return "BET"
+
+    if confidence >= 58:
+        return "CAUTION"
+
+    return "AVOID"
 
 
 # ============================================================
-# TELEGRAM HELPERS
+# FULL MATCH ANALYSIS
 # ============================================================
 
-def market_line(name, confidence, reason):
-    g, advice = grade(confidence)
+def analyze_match(team1_name, team2_name):
 
-    return (
-        f"{name} — Confidence {confidence}%\n"
-        f"Grade: {g}\n"
-        f"Advice: {advice}\n"
-        f"Reason: {reason}\n"
-    )
+    team1_id = find_team_id(team1_name)
+    team2_id = find_team_id(team2_name)
 
-
-def team_summary(name, stats, form):
-    return (
-        f"📊 {name.upper()} — LAST {stats['matches']}\n"
-        f"Form: {form}\n"
-        f"W/D/L: "
-        f"{stats['wins']}/"
-        f"{stats['draws']}/"
-        f"{stats['losses']}\n"
-        f"Goals scored: {stats['gf']}\n"
-        f"Goals conceded: {stats['ga']}\n"
-        f"Avg scored: {stats['avg_gf']:.2f}\n"
-        f"Avg conceded: {stats['avg_ga']:.2f}\n"
-        f"Avg total goals: {stats['avg_total']:.2f}\n"
-        f"Over 0.5: {stats['over05']:.0f}%\n"
-        f"Over 1.5: {stats['over15']:.0f}%\n"
-        f"Over 2.5: {stats['over25']:.0f}%\n"
-        f"Under 3.5: {stats['under35']:.0f}%\n"
-        f"BTTS: {stats['btts']:.0f}%\n"
-        f"Scoring consistency: {stats['scoring']:.0f}%\n"
-        f"Clean sheets: {stats['clean']:.0f}%\n"
-    )
-
-
-# ============================================================
-# ANALYSIS
-# ============================================================
-
-async def analyze_match(update, team1_name, team2_name):
-    team1 = find_team(team1_name)
-    team2 = find_team(team2_name)
-
-    if not team1:
-        await update.message.reply_text(
-            f"❌ I couldn't identify {team1_name}."
+    if not team1_id:
+        return (
+            f"❌ I couldn't find {team1_name} "
+            f"in the team database."
         )
-        return
 
-    if not team2:
-        await update.message.reply_text(
-            f"❌ I couldn't identify {team2_name}."
+    if not team2_id:
+        return (
+            f"❌ I couldn't find {team2_name} "
+            f"in the team database."
         )
-        return
 
-    await update.message.reply_text(
-        "🔎 GoalLogic AI is collecting recent completed matches..."
+    team1_matches = get_team_matches(
+        team1_id,
+        team1_name
     )
 
-    matches1 = get_team_matches(
-        team1["id"],
-        team1["name"]
+    team2_matches = get_team_matches(
+        team2_id,
+        team2_name
     )
 
-    matches2 = get_team_matches(
-        team2["id"],
-        team2["name"]
-    )
-
-    if len(matches1) < MIN_MATCHES:
-        await update.message.reply_text(
+    if len(team1_matches) < MIN_MATCHES:
+        return (
             f"⚠️ OpenFoot returned only "
-            f"{len(matches1)} usable completed matches "
-            f"for {team1['name']}.\n\n"
-            f"Team ID: {team1['id']}\n"
-            f"Season: {CURRENT_SEASON}"
+            f"{len(team1_matches)} usable completed "
+            f"matches for {team1_name}."
         )
-        return
 
-    if len(matches2) < MIN_MATCHES:
-        await update.message.reply_text(
+    if len(team2_matches) < MIN_MATCHES:
+        return (
             f"⚠️ OpenFoot returned only "
-            f"{len(matches2)} usable completed matches "
-            f"for {team2['name']}.\n\n"
-            f"Team ID: {team2['id']}\n"
-            f"Season: {CURRENT_SEASON}"
+            f"{len(team2_matches)} usable completed "
+            f"matches for {team2_name}."
         )
-        return
 
-    recent1 = matches1[:RECENT_MATCHES]
-    recent2 = matches2[:RECENT_MATCHES]
+    team1 = calculate_stats(team1_matches)
+    team2 = calculate_stats(team2_matches)
 
-    stats1 = calculate_stats(
-        recent1,
-        team1["id"]
+    home = venue_stats(team1_matches, True)
+    away = venue_stats(team2_matches, False)
+
+    lines = []
+
+    lines.append("⚽ GOALLOGIC AI — MATCH ANALYSIS")
+    lines.append("")
+    lines.append(
+        f"{team1_name} vs {team2_name}"
     )
-
-    stats2 = calculate_stats(
-        recent2,
-        team2["id"]
+    lines.append(
+        f"Season: {CURRENT_SEASON}"
     )
+    lines.append("")
 
-    # Home statistics for team 1
-    home_matches = [
-        m for m in matches1
-        if (m.get("homeTeam") or {}).get("id")
-        == team1["id"]
-    ][:3]
+    # --------------------------------------------------------
+    # TEAM STATISTICS
+    # --------------------------------------------------------
 
-    home_stats = calculate_stats(
-        home_matches,
-        team1["id"]
-    ) if home_matches else None
+    def add_team_stats(name, stats):
 
-    # Away statistics for team 2
-    away_matches = [
-        m for m in matches2
-        if (m.get("awayTeam") or {}).get("id")
-        == team2["id"]
-    ][:3]
+        lines.extend([
+            f"📊 {name.upper()} — LAST {stats['sample']}",
+            f"Form: {stats['form']}",
+            (
+                f"W/D/L: {stats['wins']}/"
+                f"{stats['draws']}/"
+                f"{stats['losses']}"
+            ),
+            f"Goals scored: {stats['gf']}",
+            f"Goals conceded: {stats['ga']}",
+            f"Avg scored: {stats['avg_gf']:.2f}",
+            f"Avg conceded: {stats['avg_ga']:.2f}",
+            f"Avg total goals: {stats['avg_total']:.2f}",
+            f"Over 0.5: {stats['over05']:.0f}%",
+            f"Over 1.5: {stats['over15']:.0f}%",
+            f"Over 2.5: {stats['over25']:.0f}%",
+            f"Under 3.5: {stats['under35']:.0f}%",
+            f"BTTS: {stats['btts']:.0f}%",
+            f"Scoring consistency: {stats['scoring']:.0f}%",
+            f"Clean sheets: {stats['clean']:.0f}%",
+            "",
+        ])
 
-    away_stats = calculate_stats(
-        away_matches,
-        team2["id"]
-    ) if away_matches else None
+    add_team_stats(team1_name, team1)
+    add_team_stats(team2_name, team2)
 
-    # Correctly calculated away-specific stats
-    away_specific = calculate_away_stats(
-        recent2,
-        team2["id"]
-    )
+    # --------------------------------------------------------
+    # HOME / AWAY
+    # --------------------------------------------------------
 
-    # Convert venue data into a form suitable for double chance
-    home_dc = {
-        "matches": len(home_matches),
-        "wins": 0,
-        "draws": 0,
-    }
+    lines.append("🏠 HOME / AWAY CONTEXT")
+    lines.append("")
 
-    for m in home_matches:
-        hs = m["_home_score"]
-        aws = m["_away_score"]
+    if home:
 
-        if hs > aws:
-            home_dc["wins"] += 1
-        elif hs == aws:
-            home_dc["draws"] += 1
+        lines.extend([
+            (
+                f"{team1_name} home sample: "
+                f"{home['sample']} matches"
+            ),
+            f"Home scoring: {home['scoring']:.0f}%",
+            f"Home Over 2.5: {home['over25']:.0f}%",
+            f"Home BTTS: {home['btts']:.0f}%",
+            "",
+        ])
 
-    away_dc = {
-        "matches": len(away_matches),
-        "wins": 0,
-        "draws": 0,
-    }
-
-    for m in away_matches:
-        hs = m["_home_score"]
-        aws = m["_away_score"]
-
-        if aws > hs:
-            away_dc["wins"] += 1
-        elif aws == hs:
-            away_dc["draws"] += 1
-
-    # Double chance
-    dc = confidence_double_chance(
-        stats1,
-        stats2,
-        home_dc,
-        away_dc,
-    )
-
-    # Goal markets
-    over05 = confidence_over05(
-        stats1,
-        stats2,
-        home_stats,
-        away_specific,
-    )
-
-    over15 = confidence_over15(
-        stats1,
-        stats2,
-        home_stats,
-        away_specific,
-    )
-
-    over25 = confidence_over25(
-        stats1,
-        stats2,
-        home_stats,
-        away_specific,
-    )
-
-    under35 = confidence_under35(
-        stats1,
-        stats2,
-        home_stats,
-        away_specific,
-    )
-
-    btts = confidence_btts(
-        stats1,
-        stats2,
-        home_stats,
-        away_specific,
-    )
-
-    team1_score = confidence_team_score(
-        stats1,
-        stats2,
-        home_stats,
-    )
-
-    team2_score = confidence_team_score(
-        stats2,
-        stats1,
-        away_specific,
-    )
-
-    # Combined environment
-    combined_avg = (
-        stats1["avg_total"] +
-        stats2["avg_total"]
-    ) / 2
-
-    # Select primary signal from useful markets.
-    candidates = {
-        "1X": dc["1X"],
-        "X2": dc["X2"],
-        "12": dc["12"],
-        "Over 1.5": over15,
-        "Over 2.5": over25,
-        "Under 3.5": under35,
-        "BTTS": btts,
-        f"{team1['name']} to score": team1_score,
-        f"{team2['name']} to score": team2_score,
-    }
-
-    # Avoid making Over 0.5 the automatic primary signal.
-    primary_name = max(
-        candidates,
-        key=candidates.get
-    )
-
-    primary_confidence = candidates[primary_name]
-
-    primary_grade, primary_advice = grade(
-        primary_confidence
-    )
-
-    form1 = form_string(
-        recent1,
-        team1["id"]
-    )
-
-    form2 = form_string(
-        recent2,
-        team2["id"]
-    )
-
-    # ========================================================
-    # BUILD RESPONSE
-    # ========================================================
-
-    response = (
-        "⚽ GOALLOGIC AI — MATCH ANALYSIS\n\n"
-        f"{team1['name']} vs {team2['name']}\n"
-        f"Season: {CURRENT_SEASON}\n\n"
-    )
-
-    response += team_summary(
-        team1["name"],
-        stats1,
-        form1
-    )
-
-    response += "\n"
-
-    response += team_summary(
-        team2["name"],
-        stats2,
-        form2
-    )
-
-    response += "\n"
-
-    response += (
-        "🏠 HOME / AWAY CONTEXT\n\n"
-    )
-
-    if home_stats:
-        response += (
-            f"{team1['name']} home sample: "
-            f"{home_stats['matches']} matches\n"
-            f"Home scoring: "
-            f"{home_stats['scoring']:.0f}%\n"
-            f"Home Over 2.5: "
-            f"{home_stats['over25']:.0f}%\n"
-            f"Home BTTS: "
-            f"{home_stats['btts']:.0f}%\n\n"
-        )
     else:
-        response += (
-            f"{team1['name']} home sample: "
-            "Not enough data\n\n"
-        )
 
-    if away_specific:
-        response += (
-            f"{team2['name']} away sample: "
-            f"{away_specific['matches']} matches\n"
-            f"Away scoring: "
-            f"{away_specific['scoring']:.0f}%\n"
-            f"Away Over 2.5: "
-            f"{away_specific['over25']:.0f}%\n"
-            f"Away BTTS: "
-            f"{away_specific['btts']:.0f}%\n\n"
-        )
+        lines.extend([
+            f"{team1_name} home sample: 0 matches",
+            "",
+        ])
+
+    if away:
+
+        lines.extend([
+            (
+                f"{team2_name} away sample: "
+                f"{away['sample']} matches"
+            ),
+            f"Away scoring: {away['scoring']:.0f}%",
+            f"Away Over 2.5: {away['over25']:.0f}%",
+            f"Away BTTS: {away['btts']:.0f}%",
+            "",
+        ])
+
     else:
-        response += (
-            f"{team2['name']} away sample: "
-            "Not enough data\n\n"
+
+        lines.extend([
+            f"{team2_name} away sample: 0 matches",
+            "",
+        ])
+
+    # --------------------------------------------------------
+    # DOUBLE CHANCE
+    # --------------------------------------------------------
+
+    one_x_base_values = [
+        team1["wd"]
+    ]
+
+    if home:
+        one_x_base_values.append(home["wd"])
+
+    one_x_base = mean(one_x_base_values)
+
+    one_x = confidence_from_base(
+        one_x_base,
+        support=8 if home and home["wd"] >= 67 else 0,
+        counter=(100 - team2["wd"]) / 5,
+        sample=(
+            min(
+                team1["sample"],
+                home["sample"]
+            )
+            if home
+            else team1["sample"]
+        ),
+    )
+
+    x2_base_values = [
+        team2["wd"]
+    ]
+
+    if away:
+        x2_base_values.append(away["wd"])
+
+    x2_base = mean(x2_base_values)
+
+    x2 = confidence_from_base(
+        x2_base,
+        support=8 if away and away["wd"] >= 67 else 0,
+        counter=(100 - team1["wd"]) / 5,
+        sample=(
+            min(
+                team2["sample"],
+                away["sample"]
+            )
+            if away
+            else team2["sample"]
+        ),
+    )
+
+    no_draw_base = 100 - mean([
+        team1["draw_rate"],
+        team2["draw_rate"]
+    ])
+
+    no_draw = confidence_from_base(
+        no_draw_base,
+        support=8
+        if (
+            team1["draw_rate"] <= 20
+            and team2["draw_rate"] <= 20
         )
-
-    response += (
-        "🎯 DOUBLE CHANCE\n\n"
+        else 0,
+        counter=0,
+        sample=min(
+            team1["sample"],
+            team2["sample"]
+        ),
     )
 
-    response += market_line(
-        "1X — Home Win or Draw",
-        dc["1X"],
+    lines.extend([
+        "🎯 DOUBLE CHANCE",
+        "",
+        f"1X — Home Win or Draw — Confidence {one_x}%",
+        f"Grade: {grade(one_x)}",
+        f"Advice: {advice(one_x)}",
         (
-            f"{team1['name']} recent W/D rate is "
-            f"{(stats1['wins'] + stats1['draws']) / stats1['matches'] * 100:.0f}%"
-        )
-    )
-
-    response += market_line(
-        "X2 — Draw or Away Win",
-        dc["X2"],
+            f"Reason: {team1_name} recent W/D rate "
+            f"is {team1['wd']:.0f}%"
+        ),
+        "",
+        f"X2 — Draw or Away Win — Confidence {x2}%",
+        f"Grade: {grade(x2)}",
+        f"Advice: {advice(x2)}",
         (
-            f"{team2['name']} recent W/D rate is "
-            f"{(stats2['wins'] + stats2['draws']) / stats2['matches'] * 100:.0f}%"
-        )
-    )
-
-    response += market_line(
-        "12 — Either Team Wins",
-        dc["12"],
+            f"Reason: {team2_name} recent W/D rate "
+            f"is {team2['wd']:.0f}%"
+        ),
+        "",
+        f"12 — Either Team Wins — Confidence {no_draw}%",
+        f"Grade: {grade(no_draw)}",
+        f"Advice: {advice(no_draw)}",
         (
-            f"Recent draw rates: "
-            f"{team1['name']} {stats1['draws'] / stats1['matches'] * 100:.0f}%, "
-            f"{team2['name']} {stats2['draws'] / stats2['matches'] * 100:.0f}%"
-        )
+            f"Reason: Recent draw rates: "
+            f"{team1_name} {team1['draw_rate']:.0f}%, "
+            f"{team2_name} {team2['draw_rate']:.0f}%"
+        ),
+        "",
+    ])
+
+    # --------------------------------------------------------
+    # GOAL ENVIRONMENT
+    # --------------------------------------------------------
+
+    combined_avg = mean([
+        team1["avg_total"],
+        team2["avg_total"]
+    ])
+
+    # OVER 0.5
+    over05_base = mean([
+        team1["over05"],
+        team2["over05"]
+    ])
+
+    over05 = confidence_from_base(
+        over05_base,
+        support=8 if combined_avg >= 2 else 0,
+        counter=0,
+        sample=min(
+            team1["sample"],
+            team2["sample"]
+        ),
     )
 
-    response += (
-        "⚽ GOAL MARKETS\n\n"
+    # OVER 1.5
+    over15_base = mean([
+        team1["over15"],
+        team2["over15"]
+    ])
+
+    over15 = confidence_from_base(
+        over15_base,
+        support=10 if combined_avg >= 2.5 else 0,
+        counter=0,
+        sample=min(
+            team1["sample"],
+            team2["sample"]
+        ),
     )
 
-    response += market_line(
-        "Over 0.5 Goals",
-        over05,
+    # OVER 2.5
+    over25_base = mean([
+        team1["over25"],
+        team2["over25"]
+    ])
+
+    over25 = confidence_from_base(
+        over25_base,
+        support=10 if combined_avg >= 3 else 0,
+        counter=12
+        if away and away["over25"] <= 40
+        else 0,
+        sample=min(
+            team1["sample"],
+            team2["sample"]
+        ),
+    )
+
+    # UNDER 3.5
+    under35_base = mean([
+        team1["under35"],
+        team2["under35"]
+    ])
+
+    under35 = confidence_from_base(
+        under35_base,
+        support=10 if combined_avg <= 2.5 else 0,
+        counter=15 if combined_avg >= 3.5 else 0,
+        sample=min(
+            team1["sample"],
+            team2["sample"]
+        ),
+    )
+
+    lines.extend([
+        "⚽ GOAL MARKETS",
+        "",
+        f"Over 0.5 Goals — Confidence {over05}%",
+        f"Grade: {grade(over05)}",
+        f"Advice: {advice(over05)}",
         (
-            f"{team1['name']} recent Over 0.5: "
-            f"{stats1['over05']:.0f}%; "
-            f"{team2['name']}: "
-            f"{stats2['over05']:.0f}%"
-        )
-    )
-
-    response += market_line(
-        "Over 1.5 Goals",
-        over15,
+            f"Reason: {team1_name} recent Over 0.5: "
+            f"{team1['over05']:.0f}%; "
+            f"{team2_name}: {team2['over05']:.0f}%; "
+            f"sample-size adjustment applied"
+        ),
+        "",
+        f"Over 1.5 Goals — Confidence {over15}%",
+        f"Grade: {grade(over15)}",
+        f"Advice: {advice(over15)}",
         (
-            f"Combined recent goal environment: "
-            f"{combined_avg:.2f}"
-        )
-    )
-
-    response += market_line(
-        "Over 2.5 Goals",
-        over25,
+            f"Reason: Combined recent goal "
+            f"environment: {combined_avg:.2f}"
+        ),
+        "",
+        f"Over 2.5 Goals — Confidence {over25}%",
+        f"Grade: {grade(over25)}",
+        f"Advice: {advice(over25)}",
         (
-            f"{team1['name']}: "
-            f"{stats1['over25']:.0f}%; "
-            f"{team2['name']}: "
-            f"{stats2['over25']:.0f}%; "
-            f"combined average: "
-            f"{combined_avg:.2f}"
-        )
-    )
-
-    response += market_line(
-        "Under 3.5 Goals",
-        under35,
+            f"Reason: {team1_name}: "
+            f"{team1['over25']:.0f}%; "
+            f"{team2_name}: "
+            f"{team2['over25']:.0f}%; "
+            f"combined average: {combined_avg:.2f}"
+        ),
+        "",
+        f"Under 3.5 Goals — Confidence {under35}%",
+        f"Grade: {grade(under35)}",
+        f"Advice: {advice(under35)}",
         (
-            f"Combined recent goal environment: "
-            f"{combined_avg:.2f}"
-        )
+            f"Reason: Combined recent goal "
+            f"environment: {combined_avg:.2f}"
+        ),
+        "",
+    ])
+
+    # --------------------------------------------------------
+    # BTTS
+    # --------------------------------------------------------
+
+    btts_base = mean([
+        team1["btts"],
+        team2["btts"]
+    ])
+
+    btts = confidence_from_base(
+        btts_base,
+        support=10
+        if home and home["btts"] >= 67
+        else 0,
+        counter=15
+        if away and away["btts"] <= 33
+        else 0,
+        sample=min(
+            team1["sample"],
+            team2["sample"]
+        ),
     )
 
-    response += (
-        "🤝 BTTS\n\n"
-    )
-
-    response += market_line(
-        "BTTS — Yes",
-        btts,
+    lines.extend([
+        "🤝 BTTS",
+        "",
+        f"BTTS — Yes — Confidence {btts}%",
+        f"Grade: {grade(btts)}",
+        f"Advice: {advice(btts)}",
         (
-            f"{team1['name']} BTTS: "
-            f"{stats1['btts']:.0f}%; "
-            f"{team2['name']} BTTS: "
-            f"{stats2['btts']:.0f}%"
-        )
+            f"Reason: {team1_name} BTTS: "
+            f"{team1['btts']:.0f}%; "
+            f"{team2_name} BTTS: "
+            f"{team2['btts']:.0f}%"
+        ),
+        "",
+    ])
+
+    # --------------------------------------------------------
+    # TEAM TO SCORE
+    # --------------------------------------------------------
+
+    team1_score_base = mean([
+        team1["scoring"],
+        home["scoring"] if home else team1["scoring"],
+        100 - team2["clean"],
+    ])
+
+    team1_score = confidence_from_base(
+        team1_score_base,
+        support=8
+        if home and home["scoring"] >= 67
+        else 0,
+        counter=10
+        if away and away["clean"] >= 67
+        else 0,
+        sample=(
+            min(
+                team1["sample"],
+                home["sample"]
+            )
+            if home
+            else team1["sample"]
+        ),
     )
 
-    response += (
-        "🎯 TEAM TO SCORE\n\n"
+    team2_score_base = mean([
+        team2["scoring"],
+        away["scoring"] if away else team2["scoring"],
+        100 - team1["clean"],
+    ])
+
+    team2_score = confidence_from_base(
+        team2_score_base,
+        support=8
+        if away and away["scoring"] >= 67
+        else 0,
+        counter=10
+        if home and home["clean"] >= 67
+        else 0,
+        sample=(
+            min(
+                team2["sample"],
+                away["sample"]
+            )
+            if away
+            else team2["sample"]
+        ),
     )
 
-    response += market_line(
-        f"{team1['name']} to Score",
-        team1_score,
+    lines.extend([
+        "🎯 TEAM TO SCORE",
+        "",
         (
-            f"Scoring consistency: "
-            f"{stats1['scoring']:.0f}%; "
+            f"{team1_name} to Score — "
+            f"Confidence {team1_score}%"
+        ),
+        f"Grade: {grade(team1_score)}",
+        f"Advice: {advice(team1_score)}",
+        (
+            f"Reason: Scoring consistency: "
+            f"{team1['scoring']:.0f}%; "
             f"opponent clean-sheet rate: "
-            f"{stats2['clean']:.0f}%"
-        )
-    )
-
-    response += market_line(
-        f"{team2['name']} to Score",
-        team2_score,
+            f"{team2['clean']:.0f}%"
+        ),
+        "",
         (
-            f"Scoring consistency: "
-            f"{stats2['scoring']:.0f}%; "
+            f"{team2_name} to Score — "
+            f"Confidence {team2_score}%"
+        ),
+        f"Grade: {grade(team2_score)}",
+        f"Advice: {advice(team2_score)}",
+        (
+            f"Reason: Scoring consistency: "
+            f"{team2['scoring']:.0f}%; "
             f"opponent clean-sheet rate: "
-            f"{stats1['clean']:.0f}%"
-        )
+            f"{team1['clean']:.0f}%"
+        ),
+        "",
+    ])
+
+    # --------------------------------------------------------
+    # PRIMARY SIGNAL
+    # --------------------------------------------------------
+
+    candidates = [
+        ("1X", one_x),
+        ("X2", x2),
+        ("12", no_draw),
+        ("Over 1.5 Goals", over15),
+        ("Over 2.5 Goals", over25),
+        ("Under 3.5 Goals", under35),
+        ("BTTS — Yes", btts),
+        (
+            f"{team1_name} to Score",
+            team1_score
+        ),
+        (
+            f"{team2_name} to Score",
+            team2_score
+        ),
+    ]
+
+    candidates.sort(
+        key=lambda item: item[1],
+        reverse=True
     )
 
-    response += (
-        "⭐ PRIMARY STATISTICAL SIGNAL\n\n"
-        f"{primary_name} — "
-        f"Confidence {primary_confidence}%\n"
-        f"Grade: {primary_grade}\n"
-        f"Advice: {primary_advice}\n\n"
-    )
+    primary_name, primary_confidence = candidates[0]
 
-    response += (
-        "🧠 GoalLogic AI selects the primary signal "
-        "from the available markets instead of automatically "
-        "choosing Over 0.5 Goals.\n\n"
-        "⚠️ Statistical analysis is not a guarantee of the "
-        "match outcome. Confidence figures are indicators, "
-        "not certainty."
-    )
+    lines.extend([
+        "⭐ PRIMARY STATISTICAL SIGNAL",
+        "",
+        (
+            f"{primary_name} — "
+            f"Confidence {primary_confidence}%"
+        ),
+        f"Grade: {grade(primary_confidence)}",
+        f"Advice: {advice(primary_confidence)}",
+        "",
+        (
+            "🧠 GoalLogic AI uses a calibrated confidence "
+            "model based on recent form, home/away context, "
+            "scoring, defending and sample size."
+        ),
+        "",
+        (
+            "⚠️ Statistical analysis is not a guarantee "
+            "of the match outcome. Confidence figures are "
+            "indicators, not certainty."
+        ),
+    ])
 
-    return response
+    return "\n".join(lines)
 
 
 # ============================================================
-# TELEGRAM COMMANDS
+# TELEGRAM
 # ============================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     await update.message.reply_text(
-        "⚽ Welcome to GoalLogic AI.\n\n"
-        "Send:\n"
+        "⚽ GoalLogic AI is online.\n\n"
+        "Use:\n"
         "/analyze Chelsea vs Arsenal\n\n"
-        "I can analyze form, goals, BTTS, team scoring "
-        "and Double Chance markets."
+        "Or simply send:\n"
+        "Chelsea vs Arsenal"
     )
 
 
 async def apitest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if not OPENFOOT_API_KEY:
         await update.message.reply_text(
-            "❌ OPENFOOT_API_KEY is missing from Render."
+            "❌ OPENFOOT_API_KEY is missing."
         )
         return
 
-    test = openfoot_get(
-        "/v1/matches",
-        {
-            "season": CURRENT_SEASON,
-            "competition": EPL_ID,
-        }
+    try:
+
+        response = requests.get(
+            OPENFOOT_BASE + "/v1/health",
+            headers={
+                "Accept": "application/json",
+                "Authorization": (
+                    f"Bearer {OPENFOOT_API_KEY}"
+                ),
+            },
+            timeout=15,
+        )
+
+        if response.status_code == 200:
+
+            await update.message.reply_text(
+                "✅ OPENFOOT TEST PASSED\n\n"
+                "OpenFoot API is connected successfully."
+            )
+
+        else:
+
+            await update.message.reply_text(
+                "❌ OpenFoot test failed.\n"
+                f"HTTP {response.status_code}"
+            )
+
+    except Exception as e:
+
+        await update.message.reply_text(
+            f"❌ OpenFoot test failed.\n{e}"
+        )
+
+
+def parse_match(text):
+
+    cleaned = re.sub(
+        r"^/analyze\s*",
+        "",
+        text,
+        flags=re.I
+    ).strip()
+
+    cleaned = re.sub(
+        r"\s+",
+        " ",
+        cleaned
     )
 
-    if test:
-        await update.message.reply_text(
-            "✅ OPENFOOT TEST PASSED\n\n"
-            "OpenFoot API is connected successfully."
-        )
-    else:
-        # Health endpoint is not used as proof of API auth.
-        # We keep this message simple for Telegram testing.
-        await update.message.reply_text(
-            "⚠️ OpenFoot connection was reached, "
-            "but the test returned no match data."
-        )
+    parts = re.split(
+        r"\s+(?:vs?|versus)\s+",
+        cleaned,
+        flags=re.I
+    )
+
+    if len(parts) != 2:
+        return None, None
+
+    return (
+        parts[0].strip(),
+        parts[1].strip()
+    )
 
 
 async def analyze_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    text = " ".join(context.args).strip()
 
-    if not text:
+    text = update.message.text or ""
+
+    team1, team2 = parse_match(text)
+
+    if not team1 or not team2:
+
         await update.message.reply_text(
-            "Use:\n"
+            "Use this format:\n"
             "/analyze Chelsea vs Arsenal"
         )
+
         return
 
-    parts = re.split(
-        r"\s+vs\s+|\s+v\s+|\s+-\s+",
-        text,
-        flags=re.IGNORECASE
+    await update.message.reply_text(
+        "🔎 Analyzing recent OpenFoot data..."
     )
 
-    if len(parts) != 2:
-        await update.message.reply_text(
-            "❌ Please use this format:\n"
-            "/analyze Chelsea vs Arsenal"
-        )
-        return
+    result = analyze_match(
+        team1,
+        team2
+    )
 
-    team1 = parts[0].strip()
-    team2 = parts[1].strip()
-
-    try:
-        result = await analyze_match(
-            update,
-            team1,
-            team2
-        )
-
-        if result:
-            await update.message.reply_text(result)
-
-    except Exception as e:
-        print(f"Analysis error: {e}")
-
-        await update.message.reply_text(
-            "❌ An error occurred while analyzing "
-            "the match.\n\n"
-            "Please try again."
-        )
+    await update.message.reply_text(result)
 
 
 async def text_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    text = update.message.text.strip()
 
-    parts = re.split(
-        r"\s+vs\s+|\s+v\s+",
+    text = update.message.text or ""
+
+    if re.search(
+        r"\s+(?:vs?|versus)\s+",
         text,
-        flags=re.IGNORECASE
-    )
+        flags=re.I
+    ):
 
-    if len(parts) == 2:
-        await analyze_match(
-            update,
-            parts[0].strip(),
-            parts[1].strip()
-        )
-    else:
-        await update.message.reply_text(
-            "Use:\n"
-            "/analyze Chelsea vs Arsenal"
-        )
+        team1, team2 = parse_match(text)
+
+        if team1 and team2:
+
+            await update.message.reply_text(
+                "🔎 Analyzing recent OpenFoot data..."
+            )
+
+            result = analyze_match(
+                team1,
+                team2
+            )
+
+            await update.message.reply_text(result)
+
+            return
+
+    await update.message.reply_text(
+        "⚽ GoalLogic AI\n\n"
+        "Send a match like:\n"
+        "Chelsea vs Arsenal\n\n"
+        "or use:\n"
+        "/analyze Chelsea vs Arsenal"
+    )
 
 
 # ============================================================
@@ -1374,6 +1106,7 @@ async def text_handler(
 # ============================================================
 
 def main():
+
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError(
             "TELEGRAM_BOT_TOKEN is missing."
@@ -1384,38 +1117,34 @@ def main():
             "OPENFOOT_API_KEY is missing."
         )
 
-    print("======================================")
-    print("GOALLOGIC AI")
-    print("Starting...")
-    print("OpenFoot enabled")
-    print(f"Season: {CURRENT_SEASON}")
-    print("Double Chance enabled")
-    print("======================================")
-
     threading.Thread(
         target=start_health_server,
         daemon=True
     ).start()
 
-    application = (
-        Application.builder()
+    app = (
+        Application
+        .builder()
         .token(TELEGRAM_BOT_TOKEN)
         .build()
     )
 
-    application.add_handler(
+    app.add_handler(
         CommandHandler("start", start)
     )
 
-    application.add_handler(
+    app.add_handler(
         CommandHandler("apitest", apitest)
     )
 
-    application.add_handler(
-        CommandHandler("analyze", analyze_command)
+    app.add_handler(
+        CommandHandler(
+            "analyze",
+            analyze_command
+        )
     )
 
-    application.add_handler(
+    app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             text_handler
@@ -1424,7 +1153,7 @@ def main():
 
     print("GoalLogic AI is running.")
 
-    application.run_polling(
+    app.run_polling(
         drop_pending_updates=True
     )
 
