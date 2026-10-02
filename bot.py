@@ -23,12 +23,13 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENFOOT_API_KEY = os.getenv("OPENFOOT_API_KEY")
 
 PORT = int(os.getenv("PORT", "10000"))
+
 OPENFOOT_BASE = "https://openfootapi.com"
 CURRENT_SEASON = "2026/27"
 
 
 # ============================================================
-# HEALTH SERVER FOR RENDER
+# RENDER HEALTH SERVER
 # ============================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -37,24 +38,19 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(
-            b"GoalLogic AI is running."
-        )
+        self.wfile.write(b"GoalLogic AI is running.")
 
     def log_message(self, format, *args):
         return
 
 
 def start_health_server():
-
     server = ThreadingHTTPServer(
         ("0.0.0.0", PORT),
         HealthHandler
     )
 
-    print(
-        f"GoalLogic AI is running on port {PORT}."
-    )
+    print(f"GoalLogic AI is running on port {PORT}.")
 
     server.serve_forever()
 
@@ -67,9 +63,7 @@ def openfoot_headers():
 
     return {
         "Accept": "application/json",
-        "Authorization": (
-            f"Bearer {OPENFOOT_API_KEY}"
-        ),
+        "Authorization": f"Bearer {OPENFOOT_API_KEY}",
     }
 
 
@@ -84,6 +78,11 @@ def openfoot_get(endpoint, params=None):
             headers=openfoot_headers(),
             params=params,
             timeout=20,
+        )
+
+        print(
+            f"OpenFoot request: {response.status_code} "
+            f"{response.url}"
         )
 
         if response.status_code != 200:
@@ -107,10 +106,7 @@ def openfoot_get(endpoint, params=None):
 
             return None
 
-        return payload.get(
-            "data",
-            []
-        )
+        return payload.get("data", [])
 
     except Exception as e:
 
@@ -123,78 +119,71 @@ def openfoot_get(endpoint, params=None):
 
 
 # ============================================================
-# SEARCH TEAM
+# TEAM SEARCH
 # ============================================================
 
 def search_team(team_name):
 
-    data = openfoot_get(
+    results = openfoot_get(
         "/v1/search",
-        {"q": team_name}
+        {
+            "q": team_name
+        }
     )
 
-    if not data:
+    if not results:
         return None
 
-    if isinstance(data, dict):
+    query = team_name.lower().strip()
 
-        results = data.get(
-            "teams",
-            []
-        )
-
-    else:
-
-        results = data
-
-    if not isinstance(results, list):
-        return None
-
-    team_name_lower = (
-        team_name.lower().strip()
-    )
-
-    # Exact match
+    # Exact match first
     for team in results:
 
         name = str(
-            team.get(
-                "name",
-                ""
-            )
+            team.get("name", "")
         ).lower().strip()
 
-        if name == team_name_lower:
-
+        if name == query:
             return team
 
-    # Partial match
+    # Partial match second
     for team in results:
 
         name = str(
-            team.get(
-                "name",
-                ""
-            )
+            team.get("name", "")
         ).lower()
 
-        if (
-            team_name_lower in name
-            or name in team_name_lower
-        ):
-
+        if query in name or name in query:
             return team
 
-    return results[0] if results else None
+    # Otherwise use first result
+    return results[0]
 
 
 # ============================================================
-# GET TEAM MATCHES
+# MATCH DATE
+# ============================================================
+
+def match_date_key(match):
+
+    value = (
+        match.get("kickoffAt")
+        or match.get("date")
+        or match.get("startTime")
+        or match.get("scheduledAt")
+        or ""
+    )
+
+    return str(value)
+
+
+# ============================================================
+# TEAM MATCHES
 # ============================================================
 
 def get_team_matches(team_id):
 
-    data = openfoot_get(
+    matches = openfoot_get(
         "/v1/matches",
         {
             "team": team_id,
@@ -202,80 +191,52 @@ def get_team_matches(team_id):
         }
     )
 
-    if not data:
+    if not matches:
         return []
 
-    if isinstance(data, dict):
-
-        matches = data.get(
-            "matches",
-            []
-        )
-
-    else:
-
-        matches = data
-
-    if not isinstance(matches, list):
-        return []
+    finished_statuses = {
+        "finished",
+        "completed",
+        "complete",
+        "ft",
+        "ended",
+        "full_time",
+        "full-time",
+    }
 
     finished = []
 
     for match in matches:
 
         status = str(
-            match.get(
-                "status",
-                ""
-            )
-        ).lower()
+            match.get("status", "")
+        ).lower().strip()
 
-        if status in [
-            "finished",
-            "completed",
-            "ft",
-        ]:
+        status_code = str(
+            match.get("statusCode", "")
+        ).lower().strip()
 
+        is_finished = (
+            status in finished_statuses
+            or status_code in finished_statuses
+        )
+
+        if is_finished:
             finished.append(match)
 
     finished.sort(
-        key=lambda x: str(
-            x.get(
-                "kickoffAt",
-                ""
-            )
-        ),
-        reverse=True,
+        key=match_date_key,
+        reverse=True
     )
 
     return finished
 
 
 # ============================================================
-# TEAM INFORMATION
+# SCORE EXTRACTION
 # ============================================================
 
-def get_team_id(team):
-
-    return team.get("id")
-
-
-def get_team_name(team):
-
-    return team.get(
-        "name",
-        "Unknown"
-    )
-
-
-# ============================================================
-# EXTRACT SCORE
-# ============================================================
-
-def extract_score(match):
-
-    home_score = None
-    away_score = None
+def get_score(match):
 
     score = match.get("score")
 
@@ -285,7 +246,6 @@ def extract_score(match):
         away_score = score.get("away")
 
         if isinstance(home_score, dict):
-
             home_score = (
                 home_score.get("current")
                 or home_score.get("display")
@@ -293,123 +253,106 @@ def extract_score(match):
             )
 
         if isinstance(away_score, dict):
-
             away_score = (
                 away_score.get("current")
                 or away_score.get("display")
                 or away_score.get("goals")
             )
 
-    if home_score is None:
-
-        home_score = match.get(
-            "homeScore"
-        )
-
-    if away_score is None:
-
-        away_score = match.get(
-            "awayScore"
-        )
-
-    try:
-
-        home_score = int(
-            home_score
-        )
-
-        away_score = int(
-            away_score
-        )
-
-    except Exception:
-
-        return None, None
-
-    return home_score, away_score
-
-
-# ============================================================
-# BUILD TEAM RECORDS
-# ============================================================
-
-def build_team_records(
-    matches,
-    team_id
-):
-
-    records = []
-
-    for match in matches:
-
-        home_team = match.get(
-            "homeTeam",
-            {}
-        )
-
-        away_team = match.get(
-            "awayTeam",
-            {}
-        )
-
-        home_id = home_team.get("id")
-        away_id = away_team.get("id")
-
-        home_score, away_score = (
-            extract_score(match)
-        )
-
         if (
-            home_score is None
-            or away_score is None
+            home_score is not None
+            and away_score is not None
         ):
+            return (
+                int(home_score),
+                int(away_score)
+            )
 
-            continue
+    home_score = (
+        match.get("homeScore")
+        or match.get("home_score")
+    )
 
-        if str(home_id) == str(team_id):
+    away_score = (
+        match.get("awayScore")
+        or match.get("away_score")
+    )
 
-            goals_for = home_score
-            goals_against = away_score
-            venue = "home"
+    if (
+        home_score is not None
+        and away_score is not None
+    ):
+        try:
+            return (
+                int(home_score),
+                int(away_score)
+            )
+        except:
+            pass
 
-        elif str(away_id) == str(team_id):
+    return None
 
-            goals_for = away_score
-            goals_against = home_score
-            venue = "away"
 
-        else:
+# ============================================================
+# TEAM RECORD
+# ============================================================
 
-            continue
+def build_team_record(match, team_id):
 
-        total_goals = (
-            goals_for
-            + goals_against
-        )
+    home = match.get("home") or {}
+    away = match.get("away") or {}
 
-        if goals_for > goals_against:
+    home_id = (
+        home.get("id")
+        or home.get("teamId")
+    )
 
-            result = "W"
+    away_id = (
+        away.get("id")
+        or away.get("teamId")
+    )
 
-        elif goals_for == goals_against:
+    score = get_score(match)
 
-            result = "D"
+    if not score:
+        return None
 
-        else:
+    home_goals, away_goals = score
 
-            result = "L"
+    if str(home_id) == str(team_id):
 
-        records.append(
-            {
-                "goals_for": goals_for,
-                "goals_against": goals_against,
-                "total_goals": total_goals,
-                "result": result,
-                "venue": venue,
-            }
-        )
+        venue = "home"
 
-    return records
+        goals_for = home_goals
+        goals_against = away_goals
+
+    elif str(away_id) == str(team_id):
+
+        venue = "away"
+
+        goals_for = away_goals
+        goals_against = home_goals
+
+    else:
+        return None
+
+    if goals_for > goals_against:
+        result = "W"
+
+    elif goals_for == goals_against:
+        result = "D"
+
+    else:
+        result = "L"
+
+    return {
+        "date": match_date_key(match),
+        "venue": venue,
+        "goals_for": goals_for,
+        "goals_against": goals_against,
+        "total_goals": goals_for + goals_against,
+        "result": result,
+    }
 
 
 # ============================================================
@@ -419,127 +362,525 @@ def build_team_records(
 def calculate_stats(records):
 
     if not records:
-        return None
+        return {
+            "sample": 0,
+            "wins": 0,
+            "draws": 0,
+            "losses": 0,
+            "goals_for": 0,
+            "goals_against": 0,
+            "avg_for": 0,
+            "avg_against": 0,
+            "avg_total": 0,
+            "over05": 0,
+            "over15": 0,
+            "over25": 0,
+            "under35": 0,
+            "btts": 0,
+            "clean": 0,
+            "scoring": 0,
+            "conceding": 0,
+            "two_to_four": 0,
+        }
 
-    total = len(records)
+    sample = len(records)
+
+    goals_for = [
+        r["goals_for"]
+        for r in records
+    ]
+
+    goals_against = [
+        r["goals_against"]
+        for r in records
+    ]
+
+    total_goals = [
+        r["total_goals"]
+        for r in records
+    ]
 
     wins = sum(
-        1 for r in records
-        if r["result"] == "W"
+        r["result"] == "W"
+        for r in records
     )
 
     draws = sum(
-        1 for r in records
-        if r["result"] == "D"
+        r["result"] == "D"
+        for r in records
     )
 
     losses = sum(
-        1 for r in records
-        if r["result"] == "L"
-    )
-
-    goals_for = sum(
-        r["goals_for"]
+        r["result"] == "L"
         for r in records
-    )
-
-    goals_against = sum(
-        r["goals_against"]
-        for r in records
-    )
-
-    over_05 = sum(
-        1 for r in records
-        if r["total_goals"] >= 1
-    )
-
-    over_15 = sum(
-        1 for r in records
-        if r["total_goals"] >= 2
-    )
-
-    over_25 = sum(
-        1 for r in records
-        if r["total_goals"] >= 3
-    )
-
-    under_35 = sum(
-        1 for r in records
-        if r["total_goals"] <= 3
-    )
-
-    btts = sum(
-        1 for r in records
-        if (
-            r["goals_for"] >= 1
-            and r["goals_against"] >= 1
-        )
-    )
-
-    clean_sheets = sum(
-        1 for r in records
-        if r["goals_against"] == 0
-    )
-
-    scoring = sum(
-        1 for r in records
-        if r["goals_for"] >= 1
-    )
-
-    conceding = sum(
-        1 for r in records
-        if r["goals_against"] >= 1
-    )
-
-    two_to_four = sum(
-        1 for r in records
-        if 2 <= r["total_goals"] <= 4
     )
 
     return {
-        "sample": total,
+
+        "sample": sample,
+
         "wins": wins,
         "draws": draws,
         "losses": losses,
-        "goals_for": goals_for,
-        "goals_against": goals_against,
-        "avg_for": goals_for / total,
-        "avg_against": goals_against / total,
-        "avg_total": (
-            goals_for + goals_against
-        ) / total,
-        "over05": (
-            over_05 / total * 100
-        ),
-        "over15": (
-            over_15 / total * 100
-        ),
-        "over25": (
-            over_25 / total * 100
-        ),
-        "under35": (
-            under_35 / total * 100
-        ),
-        "btts": (
-            btts / total * 100
-        ),
-        "clean": (
-            clean_sheets / total * 100
-        ),
-        "scoring": (
-            scoring / total * 100
-        ),
-        "conceding": (
-            conceding / total * 100
-        ),
-        "two_to_four": (
-            two_to_four / total * 100
-        ),
+
+        "goals_for": sum(goals_for),
+        "goals_against": sum(goals_against),
+
+        "avg_for": mean(goals_for),
+        "avg_against": mean(goals_against),
+        "avg_total": mean(total_goals),
+
+        "over05": 100 * sum(
+            x >= 1 for x in total_goals
+        ) / sample,
+
+        "over15": 100 * sum(
+            x >= 2 for x in total_goals
+        ) / sample,
+
+        "over25": 100 * sum(
+            x >= 3 for x in total_goals
+        ) / sample,
+
+        "under35": 100 * sum(
+            x <= 3 for x in total_goals
+        ) / sample,
+
+        "btts": 100 * sum(
+            r["goals_for"] > 0
+            and r["goals_against"] > 0
+            for r in records
+        ) / sample,
+
+        "clean": 100 * sum(
+            r["goals_against"] == 0
+            for r in records
+        ) / sample,
+
+        "scoring": 100 * sum(
+            r["goals_for"] > 0
+            for r in records
+        ) / sample,
+
+        "conceding": 100 * sum(
+            r["goals_against"] > 0
+            for r in records
+        ) / sample,
+
+        "two_to_four": 100 * sum(
+            2 <= x <= 4
+            for x in total_goals
+        ) / sample,
     }
 
 
 # ============================================================
-# FORM
+# SAMPLE RELIABILITY
+# ============================================================
+
+def sample_reliability(sample):
+
+    if sample >= 7:
+        return 100
+
+    if sample >= 5:
+        return 90
+
+    if sample >= 3:
+        return 75
+
+    if sample >= 2:
+        return 60
+
+    return 40
+
+
+def agreement_score(value1, value2):
+
+    difference = abs(
+        value1 - value2
+    )
+
+    if difference <= 10:
+        return 100
+
+    if difference <= 20:
+        return 85
+
+    if difference <= 30:
+        return 70
+
+    if difference <= 40:
+        return 55
+
+    return 40
+
+
+# ============================================================
+# MARKET CONFIDENCE
+# ============================================================
+
+def combined_confidence(
+    overall1,
+    overall2,
+    venue1,
+    venue2,
+    market,
+):
+
+    rates = {
+        "over05": "over05",
+        "over15": "over15",
+        "over25": "over25",
+        "under35": "under35",
+        "btts": "btts",
+        "two_to_four": "two_to_four",
+    }
+
+    key = rates.get(market)
+
+    if not key:
+        return 50
+
+    o1 = overall1[key]
+    o2 = overall2[key]
+
+    v1 = venue1.get(key, o1)
+    v2 = venue2.get(key, o2)
+
+    overall_average = (
+        o1 + o2
+    ) / 2
+
+    venue_average = (
+        v1 + v2
+    ) / 2
+
+    agreement = agreement_score(
+        o1,
+        o2
+    )
+
+    reliability1 = sample_reliability(
+        venue1.get("sample", 0)
+    )
+
+    reliability2 = sample_reliability(
+        venue2.get("sample", 0)
+    )
+
+    reliability = (
+        reliability1 + reliability2
+    ) / 2
+
+    # Balanced calculation
+    confidence = (
+        overall_average * 0.40
+        + venue_average * 0.25
+        + agreement * 0.10
+        + reliability * 0.10
+    )
+
+    # Defensive counter-signals
+    if market == "over25":
+
+        if (
+            venue1.get("under35", 0) >= 80
+            and venue2.get("under35", 0) >= 80
+        ):
+            confidence -= 8
+
+    if market == "under35":
+
+        if (
+            venue1.get("over25", 0) >= 70
+            or venue2.get("over25", 0) >= 70
+        ):
+            confidence -= 7
+
+    if market == "btts":
+
+        clean_counter = (
+            venue1.get("clean", 0)
+            + venue2.get("clean", 0)
+        ) / 2
+
+        if clean_counter >= 60:
+            confidence -= 8
+
+    # Small venue samples should not dominate
+    venue_sample = min(
+        venue1.get("sample", 0),
+        venue2.get("sample", 0)
+    )
+
+    if venue_sample < 2:
+        confidence = min(
+            confidence,
+            72
+        )
+
+    elif venue_sample < 3:
+        confidence = min(
+            confidence,
+            78
+        )
+
+    elif venue_sample < 5:
+        confidence = min(
+            confidence,
+            84
+        )
+
+    elif venue_sample < 7:
+        confidence = min(
+            confidence,
+            88
+        )
+
+    return round(
+        max(
+            0,
+            min(90, confidence)
+        )
+    )
+
+
+# ============================================================
+# TEAM TO SCORE CONFIDENCE
+# ============================================================
+
+def team_score_confidence(
+    team_overall,
+    team_venue,
+    opponent_overall,
+    opponent_venue,
+):
+
+    scoring_overall = (
+        team_overall["scoring"]
+    )
+
+    scoring_venue = (
+        team_venue["scoring"]
+    )
+
+    opponent_conceding = (
+        opponent_overall["conceding"]
+    )
+
+    opponent_venue_conceding = (
+        opponent_venue["conceding"]
+    )
+
+    value = (
+        scoring_overall * 0.35
+        + scoring_venue * 0.25
+        + opponent_conceding * 0.20
+        + opponent_venue_conceding * 0.10
+        + sample_reliability(
+            team_venue["sample"]
+        ) * 0.10
+    )
+
+    # Strong clean-sheet counter
+    if (
+        opponent_venue["clean"] >= 67
+    ):
+        value -= 7
+
+    return round(
+        max(
+            0,
+            min(90, value)
+        )
+    )
+
+
+# ============================================================
+# BTTS CONFIDENCE
+# ============================================================
+
+def btts_confidence(
+    team1,
+    team2,
+    venue1,
+    venue2,
+):
+
+    scoring_support = (
+        team1["scoring"]
+        + team2["scoring"]
+    ) / 2
+
+    conceding_support = (
+        team1["conceding"]
+        + team2["conceding"]
+    ) / 2
+
+    venue_btts = (
+        venue1["btts"]
+        + venue2["btts"]
+    ) / 2
+
+    clean_counter = (
+        venue1["clean"]
+        + venue2["clean"]
+    ) / 2
+
+    reliability = (
+        sample_reliability(
+            venue1["sample"]
+        )
+        + sample_reliability(
+            venue2["sample"]
+        )
+    ) / 2
+
+    confidence = (
+        scoring_support * 0.25
+        + conceding_support * 0.20
+        + venue_btts * 0.30
+        + (100 - clean_counter) * 0.15
+        + reliability * 0.10
+    )
+
+    if clean_counter >= 60:
+        confidence -= 8
+
+    return round(
+        max(
+            0,
+            min(90, confidence)
+        )
+    )
+
+
+# ============================================================
+# GRADES
+# ============================================================
+
+def grade(confidence):
+
+    if confidence >= 80:
+        return "🔥 STRONG"
+
+    if confidence >= 70:
+        return "🟢 GOOD"
+
+    if confidence >= 60:
+        return "🟡 MODERATE"
+
+    return "🔴 AVOID"
+
+
+def advice(
+    confidence,
+    sample=5
+):
+
+    if sample < 2:
+        return "AVOID"
+
+    if confidence >= 70:
+        return "BET"
+
+    if confidence >= 60:
+        return "CAUTION"
+
+    return "AVOID"
+
+
+# ============================================================
+# REASONS
+# ============================================================
+
+def market_reason(
+    market,
+    team1_name,
+    team2_name,
+    s1,
+    s2,
+    v1,
+    v2,
+):
+
+    if market == "over05":
+
+        return (
+            f"{team1_name} had Over 0.5 goals in "
+            f"{s1['over05']:.0f}% of recent matches; "
+            f"{team2_name} had {s2['over05']:.0f}%; "
+            f"recent venue rates are "
+            f"{v1['over05']:.0f}% and "
+            f"{v2['over05']:.0f}%."
+        )
+
+    if market == "over15":
+
+        return (
+            f"Recent Over 1.5 rates are "
+            f"{s1['over15']:.0f}% for {team1_name} "
+            f"and {s2['over15']:.0f}% for {team2_name}; "
+            f"combined recent goal average is "
+            f"{(s1['avg_total'] + s2['avg_total']) / 2:.1f}."
+        )
+
+    if market == "over25":
+
+        return (
+            f"Over 2.5 rates are "
+            f"{s1['over25']:.0f}% and "
+            f"{s2['over25']:.0f}%; "
+            f"combined recent goal average is "
+            f"{(s1['avg_total'] + s2['avg_total']) / 2:.1f}. "
+            f"Venue Over 2.5 rates are "
+            f"{v1['over25']:.0f}% and "
+            f"{v2['over25']:.0f}%."
+        )
+
+    if market == "under35":
+
+        return (
+            f"Under 3.5 rates are "
+            f"{s1['under35']:.0f}% for {team1_name} "
+            f"and {s2['under35']:.0f}% for {team2_name}; "
+            f"combined recent goal average is "
+            f"{(s1['avg_total'] + s2['avg_total']) / 2:.1f}. "
+            f"Over 2.5 counter-rates are "
+            f"{s1['over25']:.0f}% and "
+            f"{s2['over25']:.0f}%."
+        )
+
+    if market == "btts":
+
+        return (
+            f"{team1_name} scores in "
+            f"{s1['scoring']:.0f}% and "
+            f"{team2_name} scores in "
+            f"{s2['scoring']:.0f}% of recent matches; "
+            f"venue BTTS rates are "
+            f"{v1['btts']:.0f}% and "
+            f"{v2['btts']:.0f}%. "
+            f"Venue clean-sheet rates are "
+            f"{v1['clean']:.0f}% and "
+            f"{v2['clean']:.0f}%."
+        )
+
+    if market == "two_to_four":
+
+        return (
+            f"{team1_name} recorded 2–4 total goals in "
+            f"{s1['two_to_four']:.0f}% of recent matches; "
+            f"{team2_name} recorded "
+            f"{s2['two_to_four']:.0f}%."
+        )
+
+    return "Mixed statistical signals."
+
+
+# ============================================================
+# FORMATTING
 # ============================================================
 
 def form_string(records):
@@ -550,967 +891,110 @@ def form_string(records):
     )
 
 
-# ============================================================
-# FORMAT
-# ============================================================
-
-def pct(value):
-
-    return f"{value:.0f}%"
-
-
-# ============================================================
-# ATTACKING PROFILE
-# ============================================================
-
-def attacking_profile(
+def format_stats_block(
     name,
-    overall,
-    venue
+    stats,
+    emoji="📊",
 ):
-
-    if not overall:
-        return ""
-
-    if overall["avg_for"] >= 1.8:
-
-        attack_level = "🔥 STRONG"
-
-    elif overall["avg_for"] >= 1.3:
-
-        attack_level = "🟢 GOOD"
-
-    elif overall["avg_for"] >= 1.0:
-
-        attack_level = "🟡 MODERATE"
-
-    else:
-
-        attack_level = "🔴 LOW"
-
-    if overall["avg_against"] >= 1.7:
-
-        vulnerability = "⚠️ HIGH"
-
-    elif overall["avg_against"] >= 1.2:
-
-        vulnerability = "🟡 MODERATE"
-
-    else:
-
-        vulnerability = "🟢 LOW"
-
-    text = (
-        f"🔥 {name.upper()} — ATTACKING PROFILE\n"
-        f"Attack level: {attack_level}\n"
-        f"Avg goals scored: "
-        f"{overall['avg_for']:.2f}\n"
-        f"Scoring consistency: "
-        f"{pct(overall['scoring'])}\n"
-    )
-
-    if venue:
-
-        text += (
-            f"Recent venue avg scored: "
-            f"{venue['avg_for']:.2f}\n"
-            f"Recent venue scoring: "
-            f"{pct(venue['scoring'])}\n"
-        )
-
-    text += (
-        f"Defensive vulnerability: "
-        f"{vulnerability}\n"
-        f"Avg goals conceded: "
-        f"{overall['avg_against']:.2f}"
-    )
-
-    return text
-
-
-# ============================================================
-# DEFENSIVE PROFILE
-# ============================================================
-
-def defensive_profile(
-    name,
-    overall,
-    venue
-):
-
-    if not overall:
-        return ""
-
-    if overall["avg_against"] <= 0.8:
-
-        defense_level = "🛡️ STRONG"
-
-    elif overall["avg_against"] <= 1.2:
-
-        defense_level = "🟢 GOOD"
-
-    elif overall["avg_against"] <= 1.7:
-
-        defense_level = "🟡 MODERATE"
-
-    else:
-
-        defense_level = "🔴 VULNERABLE"
-
-    text = (
-        f"🛡️ {name.upper()} — DEFENSIVE PROFILE\n"
-        f"Defensive level: {defense_level}\n"
-        f"Avg conceded: "
-        f"{overall['avg_against']:.2f}\n"
-        f"Clean sheets: "
-        f"{pct(overall['clean'])}\n"
-        f"Conceding rate: "
-        f"{pct(overall['conceding'])}\n"
-    )
-
-    if venue:
-
-        text += (
-            f"Recent venue avg conceded: "
-            f"{venue['avg_against']:.2f}\n"
-            f"Recent venue clean sheets: "
-            f"{pct(venue['clean'])}"
-        )
-
-    return text
-
-
-# ============================================================
-# GOAL ENVIRONMENT
-# ============================================================
-
-def goal_environment(
-    stats1,
-    stats2
-):
-
-    avg_attack = mean(
-        [
-            stats1["avg_for"],
-            stats2["avg_for"],
-        ]
-    )
-
-    avg_conceded = mean(
-        [
-            stats1["avg_against"],
-            stats2["avg_against"],
-        ]
-    )
-
-    combined = (
-        avg_attack
-        + avg_conceded
-    )
-
-    if combined >= 3.0:
-
-        level = "🔥 HIGH"
-
-    elif combined >= 2.5:
-
-        level = "🟢 GOOD"
-
-    elif combined >= 2.0:
-
-        level = "🟡 MODERATE"
-
-    else:
-
-        level = "🔴 LOW"
 
     return (
-        avg_attack,
-        avg_conceded,
-        combined,
-        level,
+        f"{emoji} {name.upper()} — LAST 5\n"
+        f"Form: {form_string([]) if stats['sample'] == 0 else ''}\n"
+        f"W/D/L: "
+        f"{stats['wins']}/"
+        f"{stats['draws']}/"
+        f"{stats['losses']}\n"
+        f"Goals scored: "
+        f"{stats['goals_for']}\n"
+        f"Goals conceded: "
+        f"{stats['goals_against']}\n"
+        f"Avg scored: "
+        f"{stats['avg_for']:.1f}\n"
+        f"Avg conceded: "
+        f"{stats['avg_against']:.1f}\n"
+        f"Avg total goals: "
+        f"{stats['avg_total']:.1f}\n"
+        f"Over 0.5: "
+        f"{stats['over05']:.0f}%\n"
+        f"Over 1.5: "
+        f"{stats['over15']:.0f}%\n"
+        f"Over 2.5: "
+        f"{stats['over25']:.0f}%\n"
+        f"Under 3.5: "
+        f"{stats['under35']:.0f}%\n"
+        f"BTTS: "
+        f"{stats['btts']:.0f}%\n"
+        f"Scoring consistency: "
+        f"{stats['scoring']:.0f}%\n"
+        f"Clean sheets: "
+        f"{stats['clean']:.0f}%\n"
+        f"Sample: "
+        f"{stats['sample']} matches"
     )
 
 
-# ============================================================
-# CONFIDENCE ENGINE
-# ============================================================
-
-def confidence_score(
-    overall,
+def venue_block(
+    name,
     venue,
-    market
+    stats,
+    emoji,
 ):
 
-    if not overall:
-        return 0
-
-    if market == "over05":
-
-        overall_signal = overall["over05"]
-
-        venue_signal = (
-            venue["over05"]
-            if venue
-            else overall_signal
-        )
-
-    elif market == "over15":
-
-        overall_signal = overall["over15"]
-
-        venue_signal = (
-            venue["over15"]
-            if venue
-            else overall_signal
-        )
-
-    elif market == "over25":
-
-        overall_signal = overall["over25"]
-
-        venue_signal = (
-            venue["over25"]
-            if venue
-            else overall_signal
-        )
-
-    elif market == "under35":
-
-        overall_signal = overall["under35"]
-
-        venue_signal = (
-            venue["under35"]
-            if venue
-            else overall_signal
-        )
-
-    elif market == "btts":
-
-        overall_signal = overall["btts"]
-
-        venue_signal = (
-            venue["btts"]
-            if venue
-            else overall_signal
-        )
-
-    elif market == "score":
-
-        overall_signal = overall["scoring"]
-
-        venue_signal = (
-            venue["scoring"]
-            if venue
-            else overall_signal
-        )
-
-    elif market == "two_to_four":
-
-        overall_signal = overall["two_to_four"]
-
-        venue_signal = (
-            venue["two_to_four"]
-            if venue
-            else overall_signal
-        )
-
-    else:
-
-        return 0
-
-    # --------------------------------------------------------
-    # SAMPLE RELIABILITY
-    # --------------------------------------------------------
-
-    if venue:
-
-        sample = venue["sample"]
-
-        if sample >= 7:
-
-            reliability = 100
-
-        elif sample >= 5:
-
-            reliability = 90
-
-        elif sample >= 3:
-
-            reliability = 75
-
-        elif sample >= 2:
-
-            reliability = 60
-
-        else:
-
-            reliability = 40
-
-    else:
-
-        reliability = 50
-
-    # --------------------------------------------------------
-    # AGREEMENT
-    # --------------------------------------------------------
-
-    difference = abs(
-        overall_signal
-        - venue_signal
+    return (
+        f"{emoji} {name.upper()} — RECENT {venue.upper()}\n"
+        f"Form: "
+        f"{stats['wins']}W/"
+        f"{stats['draws']}D/"
+        f"{stats['losses']}L\n"
+        f"Avg scored: "
+        f"{stats['avg_for']:.1f}\n"
+        f"Avg conceded: "
+        f"{stats['avg_against']:.1f}\n"
+        f"Over 1.5: "
+        f"{stats['over15']:.0f}%\n"
+        f"Over 2.5: "
+        f"{stats['over25']:.0f}%\n"
+        f"Under 3.5: "
+        f"{stats['under35']:.0f}%\n"
+        f"BTTS: "
+        f"{stats['btts']:.0f}%\n"
+        f"Scoring: "
+        f"{stats['scoring']:.0f}%\n"
+        f"Clean sheets: "
+        f"{stats['clean']:.0f}%\n"
+        f"Sample: "
+        f"{stats['sample']} matches"
     )
-
-    if difference <= 10:
-
-        agreement = 100
-
-    elif difference <= 20:
-
-        agreement = 85
-
-    elif difference <= 30:
-
-        agreement = 70
-
-    elif difference <= 40:
-
-        agreement = 55
-
-    else:
-
-        agreement = 40
-
-    # --------------------------------------------------------
-    # BASE CONFIDENCE
-    # --------------------------------------------------------
-
-    confidence = (
-        overall_signal * 0.45
-        + venue_signal * 0.30
-        + reliability * 0.15
-        + agreement * 0.10
-    )
-
-    # --------------------------------------------------------
-    # COUNTER SIGNAL
-    # --------------------------------------------------------
-
-    if venue:
-
-        if market == "over05":
-
-            counter_signal = (
-                venue["over05"] < 50
-            )
-
-        elif market == "over15":
-
-            counter_signal = (
-                venue["over15"] < 50
-            )
-
-        elif market == "over25":
-
-            counter_signal = (
-                venue["over25"] < 50
-            )
-
-        elif market == "under35":
-
-            counter_signal = (
-                venue["under35"] < 50
-            )
-
-        elif market == "btts":
-
-            counter_signal = (
-                venue["btts"] < 50
-            )
-
-        elif market == "score":
-
-            counter_signal = (
-                venue["scoring"] < 50
-            )
-
-        elif market == "two_to_four":
-
-            counter_signal = (
-                venue["two_to_four"] < 50
-            )
-
-        else:
-
-            counter_signal = False
-
-        if counter_signal:
-
-            confidence -= 8
-
-    # --------------------------------------------------------
-    # CONSERVATIVE CAPS
-    # --------------------------------------------------------
-
-    if venue:
-
-        if venue["sample"] < 3:
-
-            confidence = min(
-                confidence,
-                75
-            )
-
-        elif venue["sample"] < 5:
-
-            confidence = min(
-                confidence,
-                82
-            )
-
-        elif venue["sample"] < 7:
-
-            confidence = min(
-                confidence,
-                86
-            )
-
-        else:
-
-            confidence = min(
-                confidence,
-                90
-            )
-
-    else:
-
-        confidence = min(
-            confidence,
-            80
-        )
-
-    confidence = max(
-        0,
-        min(90, confidence)
-    )
-
-    return round(confidence)
 
 
 # ============================================================
-# SMART MARKET SELECTION ENGINE
+# MAIN ANALYSIS
 # ============================================================
 
-def market_priority_score(
-    market,
-    confidence
-):
+def analyze_match(team1_name, team2_name):
 
-    """
-    Confidence is not the only factor.
-
-    This function gives each market a usefulness
-    adjustment so that very broad markets such as
-    Over 0.5 do not automatically become the primary
-    signal.
-    """
-
-    priority_adjustments = {
-
-        # Broad market.
-        # Still displayed, but less useful as the
-        # primary statistical signal.
-        "Over 0.5 Goals": -12,
-
-        # Strong general goal market.
-        "Over 1.5 Goals": -2,
-
-        # Useful goal market.
-        "Over 2.5 Goals": 0,
-
-        # Useful defensive/goal-control market.
-        "Under 3.5 Goals": 0,
-
-        # Useful attacking market.
-        "BTTS — Yes": 0,
-
-        # Team scoring markets.
-        # Small neutral adjustment.
-        "2–4 Total Goals": -1,
-    }
-
-    adjustment = priority_adjustments.get(
-        market,
-        0
-    )
-
-    score = (
-        confidence
-        + adjustment
-    )
-
-    return max(
-        0,
-        score
-    )
-
-
-def market_selection(markets):
-
-    """
-    Rank markets using both confidence and
-    market usefulness.
-    """
-
-    scored_markets = []
-
-    for market, confidence in markets.items():
-
-        selection_score = (
-            market_priority_score(
-                market,
-                confidence
-            )
-        )
-
-        scored_markets.append(
-            {
-                "market": market,
-                "confidence": confidence,
-                "score": selection_score,
-            }
-        )
-
-    scored_markets.sort(
-        key=lambda x: x["score"],
-        reverse=True
-    )
-
-    primary = (
-        scored_markets[0]
-        if scored_markets
-        else None
-    )
-
-    secondary = (
-        scored_markets[1]
-        if len(scored_markets) > 1
-        else None
-    )
-
-    return primary, secondary
-
-
-def get_risk_flags(markets):
-
-    risks = []
-
-    for market, confidence in markets.items():
-
-        if confidence < 60:
-
-            risks.append(
-                f"{market} ({confidence}%)"
-            )
-
-    return risks
-
-
-# ============================================================
-# GRADING
-# ============================================================
-
-def grade(confidence):
-
-    if confidence >= 80:
-
-        return "🔥 STRONG"
-
-    elif confidence >= 70:
-
-        return "🟢 GOOD"
-
-    elif confidence >= 60:
-
-        return "🟡 MODERATE"
-
-    return "🔴 AVOID"
-
-
-def advice(confidence):
-
-    if confidence >= 70:
-
-        return "BET"
-
-    elif confidence >= 60:
-
-        return "CAUTION"
-
-    return "AVOID"
-
-
-# ============================================================
-# MARKET REASONS
-# ============================================================
-
-def market_reason(
-    market,
-    team1_name,
-    team2_name,
-    stats1,
-    stats2,
-    venue1,
-    venue2
-):
-
-    reasons = []
-
-    if market == "Over 0.5 Goals":
-
-        if stats1["over05"] >= 80:
-
-            reasons.append(
-                f"{team1_name} had goals in "
-                f"{stats1['over05']:.0f}% "
-                f"of recent matches"
-            )
-
-        if stats2["over05"] >= 80:
-
-            reasons.append(
-                f"{team2_name} had goals in "
-                f"{stats2['over05']:.0f}% "
-                f"of recent matches"
-            )
-
-        if venue1 and venue1["over05"] >= 80:
-
-            reasons.append(
-                f"recent home Over 0.5 rate is "
-                f"{venue1['over05']:.0f}%"
-            )
-
-        if venue2 and venue2["over05"] >= 80:
-
-            reasons.append(
-                f"recent away Over 0.5 rate is "
-                f"{venue2['over05']:.0f}%"
-            )
-
-    elif market == "Over 1.5 Goals":
-
-        if stats1["over15"] >= 80:
-
-            reasons.append(
-                f"{team1_name} has a "
-                f"{stats1['over15']:.0f}% recent "
-                f"Over 1.5 rate"
-            )
-
-        if stats2["over15"] >= 80:
-
-            reasons.append(
-                f"{team2_name} has a "
-                f"{stats2['over15']:.0f}% recent "
-                f"Over 1.5 rate"
-            )
-
-        combined = mean(
-            [
-                stats1["avg_total"],
-                stats2["avg_total"],
-            ]
-        )
-
-        if combined >= 2.5:
-
-            reasons.append(
-                f"combined recent goal average "
-                f"is {combined:.1f}"
-            )
-
-        if venue1 and venue1["over15"] < 50:
-
-            reasons.append(
-                f"{team1_name} home Over 1.5 "
-                f"rate is only "
-                f"{venue1['over15']:.0f}% "
-                f"— counter-signal"
-            )
-
-        if venue2 and venue2["over15"] < 50:
-
-            reasons.append(
-                f"{team2_name} away Over 1.5 "
-                f"rate is only "
-                f"{venue2['over15']:.0f}% "
-                f"— counter-signal"
-            )
-
-    elif market == "Over 2.5 Goals":
-
-        if stats1["over25"] >= 70:
-
-            reasons.append(
-                f"{team1_name} has a "
-                f"{stats1['over25']:.0f}% recent "
-                f"Over 2.5 rate"
-            )
-
-        if stats2["over25"] >= 70:
-
-            reasons.append(
-                f"{team2_name} has a "
-                f"{stats2['over25']:.0f}% recent "
-                f"Over 2.5 rate"
-            )
-
-        combined = mean(
-            [
-                stats1["avg_total"],
-                stats2["avg_total"],
-            ]
-        )
-
-        if combined >= 2.8:
-
-            reasons.append(
-                f"combined recent goal average "
-                f"is {combined:.1f}"
-            )
-
-        if venue1 and venue1["over25"] < 50:
-
-            reasons.append(
-                f"{team1_name} home Over 2.5 "
-                f"rate is only "
-                f"{venue1['over25']:.0f}% "
-                f"— counter-signal"
-            )
-
-        if venue2 and venue2["over25"] < 50:
-
-            reasons.append(
-                f"{team2_name} away Over 2.5 "
-                f"rate is only "
-                f"{venue2['over25']:.0f}% "
-                f"— counter-signal"
-            )
-
-    elif market == "Under 3.5 Goals":
-
-        if stats1["under35"] >= 70:
-
-            reasons.append(
-                f"{team1_name} stayed under "
-                f"3.5 goals in "
-                f"{stats1['under35']:.0f}% "
-                f"of recent matches"
-            )
-
-        if stats2["under35"] >= 70:
-
-            reasons.append(
-                f"{team2_name} stayed under "
-                f"3.5 goals in "
-                f"{stats2['under35']:.0f}% "
-                f"of recent matches"
-            )
-
-        if venue1 and venue1["under35"] < 50:
-
-            reasons.append(
-                f"{team1_name} home Under 3.5 "
-                f"rate is only "
-                f"{venue1['under35']:.0f}% "
-                f"— counter-signal"
-            )
-
-        if venue2 and venue2["under35"] < 50:
-
-            reasons.append(
-                f"{team2_name} away Under 3.5 "
-                f"rate is only "
-                f"{venue2['under35']:.0f}% "
-                f"— counter-signal"
-            )
-
-    elif market == "BTTS — Yes":
-
-        if stats1["scoring"] >= 80:
-
-            reasons.append(
-                f"{team1_name} scores in "
-                f"{stats1['scoring']:.0f}% "
-                f"of recent matches"
-            )
-
-        if stats2["scoring"] >= 80:
-
-            reasons.append(
-                f"{team2_name} scores in "
-                f"{stats2['scoring']:.0f}% "
-                f"of recent matches"
-            )
-
-        if venue1 and venue1["btts"] >= 70:
-
-            reasons.append(
-                f"recent home BTTS rate is "
-                f"{venue1['btts']:.0f}%"
-            )
-
-        if venue2 and venue2["btts"] >= 70:
-
-            reasons.append(
-                f"recent away BTTS rate is "
-                f"{venue2['btts']:.0f}%"
-            )
-
-        if venue1 and venue1["clean"] >= 50:
-
-            reasons.append(
-                f"{team1_name} recent home "
-                f"clean-sheet rate is "
-                f"{venue1['clean']:.0f}% "
-                f"— counter-signal"
-            )
-
-        if venue2 and venue2["clean"] >= 50:
-
-            reasons.append(
-                f"{team2_name} recent away "
-                f"clean-sheet rate is "
-                f"{venue2['clean']:.0f}% "
-                f"— counter-signal"
-            )
-
-    elif market == f"{team1_name} to Score":
-
-        reasons.append(
-            f"{team1_name} scores in "
-            f"{stats1['scoring']:.0f}% "
-            f"of recent matches"
-        )
-
-        if venue1:
-
-            reasons.append(
-                f"recent home scoring rate is "
-                f"{venue1['scoring']:.0f}%"
-            )
-
-            if venue1["scoring"] < 50:
-
-                reasons.append(
-                    "home scoring trend is a "
-                    "counter-signal"
-                )
-
-    elif market == f"{team2_name} to Score":
-
-        reasons.append(
-            f"{team2_name} scores in "
-            f"{stats2['scoring']:.0f}% "
-            f"of recent matches"
-        )
-
-        if venue2:
-
-            reasons.append(
-                f"recent away scoring rate is "
-                f"{venue2['scoring']:.0f}%"
-            )
-
-            if venue2["scoring"] < 50:
-
-                reasons.append(
-                    "away scoring trend is a "
-                    "counter-signal"
-                )
-
-    elif market == "2–4 Total Goals":
-
-        if stats1["two_to_four"] >= 70:
-
-            reasons.append(
-                f"{team1_name} had 2–4 total goals "
-                f"in {stats1['two_to_four']:.0f}% "
-                f"of recent matches"
-            )
-
-        if stats2["two_to_four"] >= 70:
-
-            reasons.append(
-                f"{team2_name} had 2–4 total goals "
-                f"in {stats2['two_to_four']:.0f}% "
-                f"of recent matches"
-            )
-
-        if venue1 and venue1["two_to_four"] >= 70:
-
-            reasons.append(
-                f"recent home 2–4 goal rate is "
-                f"{venue1['two_to_four']:.0f}%"
-            )
-
-        if venue2 and venue2["two_to_four"] >= 70:
-
-            reasons.append(
-                f"recent away 2–4 goal rate is "
-                f"{venue2['two_to_four']:.0f}%"
-            )
-
-    if not reasons:
-
-        reasons.append(
-            "Recent statistics provide a mixed "
-            "signal for this market"
-        )
-
-    return "; ".join(reasons)
-
-
-# ============================================================
-# ANALYSIS
-# ============================================================
-
-def analyze_match(
-    team1_name,
-    team2_name
-):
-
-    team1 = search_team(
-        team1_name
-    )
-
-    team2 = search_team(
-        team2_name
-    )
+    team1 = search_team(team1_name)
+    team2 = search_team(team2_name)
 
     if not team1:
-
         return (
-            f"❌ I couldn't find "
-            f"{team1_name} in OpenFoot."
+            f"❌ I couldn't find {team1_name}."
         )
 
     if not team2:
-
         return (
-            f"❌ I couldn't find "
-            f"{team2_name} in OpenFoot."
+            f"❌ I couldn't find {team2_name}."
         )
 
-    team1_id = get_team_id(team1)
-    team2_id = get_team_id(team2)
+    team1_id = (
+        team1.get("id")
+        or team1.get("teamId")
+    )
 
-    if not team1_id or not team2_id:
-
-        return (
-            "❌ Team information "
-            "could not be resolved."
-        )
+    team2_id = (
+        team2.get("id")
+        or team2.get("teamId")
+    )
 
     matches1 = get_team_matches(
         team1_id
@@ -1520,48 +1004,84 @@ def analyze_match(
         team2_id
     )
 
-    records1 = build_team_records(
-        matches1,
-        team1_id
-    )
-
-    records2 = build_team_records(
-        matches2,
-        team2_id
-    )
-
-    records1 = records1[:5]
-    records2 = records2[:5]
-
-    stats1 = calculate_stats(
-        records1
-    )
-
-    stats2 = calculate_stats(
-        records2
-    )
-
-    if not stats1 or not stats2:
+    if not matches1 or not matches2:
 
         return (
-            "⚠️ Football data could not "
-            "be retrieved for both teams.\n"
-            "Please try again."
+            "⚠️ Football data could not be retrieved.\n\n"
+            "Please try another match."
         )
 
     # --------------------------------------------------------
-    # VENUE RECORDS
+    # Use last 5 overall matches
     # --------------------------------------------------------
 
-    home_records = [
-        r for r in records1
-        if r["venue"] == "home"
+    recent1 = [
+        r
+        for r in (
+            build_team_record(m, team1_id)
+            for m in matches1
+        )
+        if r
+    ][:5]
+
+    recent2 = [
+        r
+        for r in (
+            build_team_record(m, team2_id)
+            for m in matches2
+        )
+        if r
+    ][:5]
+
+    if len(recent1) < 2 or len(recent2) < 2:
+
+        return (
+            "⚠️ Not enough completed matches "
+            "to produce a reliable analysis."
+        )
+
+    stats1 = calculate_stats(
+        recent1
+    )
+
+    stats2 = calculate_stats(
+        recent2
+    )
+
+    # --------------------------------------------------------
+    # Get up to 5 recent home matches for team 1
+    # and away matches for team 2.
+    # --------------------------------------------------------
+
+    all_records1 = [
+        r
+        for r in (
+            build_team_record(m, team1_id)
+            for m in matches1
+        )
+        if r
     ]
 
-    away_records = [
-        r for r in records2
-        if r["venue"] == "away"
+    all_records2 = [
+        r
+        for r in (
+            build_team_record(m, team2_id)
+            for m in matches2
+        )
+        if r
     ]
+
+    home_records = [
+        r
+        for r in all_records1
+        if r["venue"] == "home"
+    ][:5]
+
+    away_records = [
+        r
+        for r in all_records2
+        if r["venue"] == "away"
+    ][:5]
 
     home_stats = calculate_stats(
         home_records
@@ -1572,664 +1092,850 @@ def analyze_match(
     )
 
     # --------------------------------------------------------
-    # GOAL ENVIRONMENT
+    # Market confidence
     # --------------------------------------------------------
 
-    (
-        avg_attack,
-        avg_conceded,
-        combined,
-        environment,
-    ) = goal_environment(
+    markets = {}
+
+    markets["Over 0.5 Goals"] = combined_confidence(
         stats1,
-        stats2
+        stats2,
+        home_stats,
+        away_stats,
+        "over05",
     )
 
-    # --------------------------------------------------------
-    # CONFIDENCE
-    # --------------------------------------------------------
+    markets["Over 1.5 Goals"] = combined_confidence(
+        stats1,
+        stats2,
+        home_stats,
+        away_stats,
+        "over15",
+    )
 
-    over05_1 = confidence_score(
+    markets["Over 2.5 Goals"] = combined_confidence(
+        stats1,
+        stats2,
+        home_stats,
+        away_stats,
+        "over25",
+    )
+
+    markets["Under 3.5 Goals"] = combined_confidence(
+        stats1,
+        stats2,
+        home_stats,
+        away_stats,
+        "under35",
+    )
+
+    markets["BTTS — Yes"] = btts_confidence(
+        stats1,
+        stats2,
+        home_stats,
+        away_stats,
+    )
+
+    team1_score = team_score_confidence(
         stats1,
         home_stats,
-        "over05"
-    )
-
-    over05_2 = confidence_score(
         stats2,
         away_stats,
-        "over05"
     )
 
-    over15_1 = confidence_score(
+    team2_score = team_score_confidence(
+        stats2,
+        away_stats,
         stats1,
         home_stats,
-        "over15"
     )
 
-    over15_2 = confidence_score(
-        stats2,
-        away_stats,
-        "over15"
-    )
+    markets[
+        f"{team1.get('name', team1_name)} to Score"
+    ] = team1_score
 
-    over25_1 = confidence_score(
+    markets[
+        f"{team2.get('name', team2_name)} to Score"
+    ] = team2_score
+
+    markets["2–4 Total Goals"] = combined_confidence(
         stats1,
-        home_stats,
-        "over25"
-    )
-
-    over25_2 = confidence_score(
         stats2,
-        away_stats,
-        "over25"
-    )
-
-    under35_1 = confidence_score(
-        stats1,
         home_stats,
-        "under35"
-    )
-
-    under35_2 = confidence_score(
-        stats2,
         away_stats,
-        "under35"
-    )
-
-    btts_1 = confidence_score(
-        stats1,
-        home_stats,
-        "btts"
-    )
-
-    btts_2 = confidence_score(
-        stats2,
-        away_stats,
-        "btts"
-    )
-
-    score1_conf = confidence_score(
-        stats1,
-        home_stats,
-        "score"
-    )
-
-    score2_conf = confidence_score(
-        stats2,
-        away_stats,
-        "score"
-    )
-
-    range1_conf = confidence_score(
-        stats1,
-        home_stats,
-        "two_to_four"
-    )
-
-    range2_conf = confidence_score(
-        stats2,
-        away_stats,
-        "two_to_four"
+        "two_to_four",
     )
 
     # --------------------------------------------------------
-    # COMBINE TEAM SIGNALS
+    # Primary signal
+    #
+    # Do NOT automatically select Over 0.5.
     # --------------------------------------------------------
 
-    over05_conf = round(
-        (
-            over05_1
-            + over05_2
-        ) / 2
-    )
+    preferred_markets = [
+        "Over 1.5 Goals",
+        "Over 2.5 Goals",
+        "Under 3.5 Goals",
+        "BTTS — Yes",
+        f"{team1.get('name', team1_name)} to Score",
+        f"{team2.get('name', team2_name)} to Score",
+        "2–4 Total Goals",
+    ]
 
-    over15_conf = round(
-        (
-            over15_1
-            + over15_2
-        ) / 2
-    )
-
-    over25_conf = round(
-        (
-            over25_1
-            + over25_2
-        ) / 2
-    )
-
-    under35_conf = round(
-        (
-            under35_1
-            + under35_2
-        ) / 2
-    )
-
-    btts_conf = round(
-        (
-            btts_1
-            + btts_2
-        ) / 2
-    )
-
-    range_conf = round(
-        (
-            range1_conf
-            + range2_conf
-        ) / 2
-    )
-
-    # --------------------------------------------------------
-    # GOAL ENVIRONMENT ADJUSTMENTS
-    # --------------------------------------------------------
-
-    if combined >= 3.0:
-
-        over05_conf = min(
-            90,
-            over05_conf + 3
-        )
-
-        over15_conf = min(
-            90,
-            over15_conf + 4
-        )
-
-        over25_conf = min(
-            90,
-            over25_conf + 3
-        )
-
-    elif combined < 2.0:
-
-        over05_conf = max(
-            0,
-            over05_conf - 3
-        )
-
-        over15_conf = max(
-            0,
-            over15_conf - 5
-        )
-
-        over25_conf = max(
-            0,
-            over25_conf - 7
-        )
-
-    # --------------------------------------------------------
-    # MARKETS
-    # --------------------------------------------------------
-
-    team1_display = get_team_name(
-        team1
-    )
-
-    team2_display = get_team_name(
-        team2
-    )
-
-    markets = {
-
-        "Over 0.5 Goals":
-            over05_conf,
-
-        "Over 1.5 Goals":
-            over15_conf,
-
-        "Over 2.5 Goals":
-            over25_conf,
-
-        "Under 3.5 Goals":
-            under35_conf,
-
-        "BTTS — Yes":
-            btts_conf,
-
-        f"{team1_display} to Score":
-            score1_conf,
-
-        f"{team2_display} to Score":
-            score2_conf,
-
-        "2–4 Total Goals":
-            range_conf,
+    eligible = {
+        market: confidence
+        for market, confidence in markets.items()
+        if market in preferred_markets
+        and confidence >= 60
     }
 
-    # --------------------------------------------------------
-    # SMART MARKET SELECTION
-    # --------------------------------------------------------
+    if eligible:
 
-    primary, secondary = (
-        market_selection(markets)
-    )
-
-    if primary:
-
-        primary_market = primary[
-            "market"
-        ]
-
-        primary_conf = primary[
-            "confidence"
-        ]
-
-    else:
-
-        primary_market = "No clear signal"
-        primary_conf = 0
-
-    if secondary:
-
-        secondary_market = secondary[
-            "market"
-        ]
-
-        secondary_conf = secondary[
-            "confidence"
-        ]
-
-    else:
-
-        secondary_market = None
-        secondary_conf = 0
-
-    risk_flags = get_risk_flags(
-        markets
-    )
-
-    # --------------------------------------------------------
-    # FORM
-    # --------------------------------------------------------
-
-    form1 = form_string(
-        records1
-    )
-
-    form2 = form_string(
-        records2
-    )
-
-    if stats1["wins"] > stats2["wins"]:
-
-        form_assessment = (
-            f"{team1_display} "
-            "has the stronger recent form."
-        )
-
-    elif stats2["wins"] > stats1["wins"]:
-
-        form_assessment = (
-            f"{team2_display} "
-            "has the stronger recent form."
+        primary_market = max(
+            eligible,
+            key=eligible.get
         )
 
     else:
 
-        form_assessment = (
-            "Both teams have similar "
-            "recent win totals."
-        )
+        primary_market = "Over 0.5 Goals"
 
-    # ========================================================
-    # RESPONSE
-    # ========================================================
+    primary_confidence = markets[
+        primary_market
+    ]
 
-    output = (
-        "⚽ GOALLOGIC AI — ADVANCED ANALYSIS\n\n"
-        f"{team1_display} vs {team2_display}\n"
-        f"Season: {CURRENT_SEASON}\n\n"
+    # --------------------------------------------------------
+    # Recent form comparison
+    # --------------------------------------------------------
+
+    wins1 = stats1["wins"]
+    wins2 = stats2["wins"]
+
+    draws1 = stats1["draws"]
+    draws2 = stats2["draws"]
+
+    losses1 = stats1["losses"]
+    losses2 = stats2["losses"]
+
+    # --------------------------------------------------------
+    # Goal environment
+    # --------------------------------------------------------
+
+    combined_avg = (
+        stats1["avg_total"]
+        + stats2["avg_total"]
+    ) / 2
+
+    if combined_avg >= 3.0:
+        environment = "🔥 HIGH"
+
+    elif combined_avg >= 2.3:
+        environment = "🟡 MODERATE"
+
+    else:
+        environment = "🛡️ LOW"
+
+    # --------------------------------------------------------
+    # Build response
+    # --------------------------------------------------------
+
+    t1_display = team1.get(
+        "name",
+        team1_name
     )
 
+    t2_display = team2.get(
+        "name",
+        team2_name
+    )
+
+    response = []
+
+    response.append(
+        "⚽ GOALLOGIC AI — ADVANCED ANALYSIS"
+    )
+
+    response.append("")
+
+    response.append(
+        f"{t1_display} vs {t2_display}"
+    )
+
+    response.append(
+        f"Season: {CURRENT_SEASON}"
+    )
+
+    response.append("")
+
     # --------------------------------------------------------
-    # TEAM 1
+    # Team 1
     # --------------------------------------------------------
 
-    output += (
-        f"📊 {team1_display.upper()} — LAST 5\n"
-        f"Form: {form1}\n"
+    response.append(
+        f"📊 {t1_display.upper()} — LAST 5"
+    )
+
+    response.append(
+        f"Form: {form_string(recent1)}"
+    )
+
+    response.append(
         f"W/D/L: "
-        f"{stats1['wins']}/"
-        f"{stats1['draws']}/"
-        f"{stats1['losses']}\n"
-        f"Goals scored: "
-        f"{stats1['goals_for']}\n"
-        f"Goals conceded: "
-        f"{stats1['goals_against']}\n"
-        f"Avg scored: "
-        f"{stats1['avg_for']:.1f}\n"
-        f"Avg conceded: "
-        f"{stats1['avg_against']:.1f}\n"
-        f"Avg total goals: "
-        f"{stats1['avg_total']:.1f}\n"
-        f"Over 0.5: "
-        f"{pct(stats1['over05'])}\n"
-        f"Over 1.5: "
-        f"{pct(stats1['over15'])}\n"
-        f"Over 2.5: "
-        f"{pct(stats1['over25'])}\n"
-        f"Under 3.5: "
-        f"{pct(stats1['under35'])}\n"
-        f"BTTS: "
-        f"{pct(stats1['btts'])}\n"
-        f"Scoring consistency: "
-        f"{pct(stats1['scoring'])}\n"
-        f"Clean sheets: "
-        f"{pct(stats1['clean'])}\n"
-        f"Sample: "
-        f"{stats1['sample']} matches\n\n"
+        f"{wins1}/{draws1}/{losses1}"
     )
 
+    response.append(
+        f"Goals scored: "
+        f"{stats1['goals_for']}"
+    )
+
+    response.append(
+        f"Goals conceded: "
+        f"{stats1['goals_against']}"
+    )
+
+    response.append(
+        f"Avg scored: "
+        f"{stats1['avg_for']:.1f}"
+    )
+
+    response.append(
+        f"Avg conceded: "
+        f"{stats1['avg_against']:.1f}"
+    )
+
+    response.append(
+        f"Avg total goals: "
+        f"{stats1['avg_total']:.1f}"
+    )
+
+    response.append(
+        f"Over 0.5: "
+        f"{stats1['over05']:.0f}%"
+    )
+
+    response.append(
+        f"Over 1.5: "
+        f"{stats1['over15']:.0f}%"
+    )
+
+    response.append(
+        f"Over 2.5: "
+        f"{stats1['over25']:.0f}%"
+    )
+
+    response.append(
+        f"Under 3.5: "
+        f"{stats1['under35']:.0f}%"
+    )
+
+    response.append(
+        f"BTTS: "
+        f"{stats1['btts']:.0f}%"
+    )
+
+    response.append(
+        f"Scoring consistency: "
+        f"{stats1['scoring']:.0f}%"
+    )
+
+    response.append(
+        f"Clean sheets: "
+        f"{stats1['clean']:.0f}%"
+    )
+
+    response.append(
+        f"Sample: {stats1['sample']} matches"
+    )
+
+    response.append("")
+
     # --------------------------------------------------------
-    # HOME
+    # Team 1 home
     # --------------------------------------------------------
 
-    if home_stats:
+    response.append(
+        f"🏠 {t1_display.upper()} — RECENT HOME"
+    )
 
-        output += (
-            f"🏠 {team1_display.upper()} — "
-            "RECENT HOME\n"
-            f"Form: "
-            f"{form_string(home_records)}\n"
-            f"W/D/L: "
-            f"{home_stats['wins']}/"
-            f"{home_stats['draws']}/"
-            f"{home_stats['losses']}\n"
-            f"Avg scored: "
-            f"{home_stats['avg_for']:.1f}\n"
-            f"Avg conceded: "
-            f"{home_stats['avg_against']:.1f}\n"
-            f"Over 1.5: "
-            f"{pct(home_stats['over15'])}\n"
-            f"Over 2.5: "
-            f"{pct(home_stats['over25'])}\n"
-            f"BTTS: "
-            f"{pct(home_stats['btts'])}\n"
-            f"Clean sheets: "
-            f"{pct(home_stats['clean'])}\n"
-            f"Sample: "
-            f"{home_stats['sample']} matches\n"
+    response.append(
+        f"Form: "
+        f"{form_string(home_records)}"
+    )
+
+    response.append(
+        f"Avg scored: "
+        f"{home_stats['avg_for']:.1f}"
+    )
+
+    response.append(
+        f"Avg conceded: "
+        f"{home_stats['avg_against']:.1f}"
+    )
+
+    response.append(
+        f"Over 1.5: "
+        f"{home_stats['over15']:.0f}%"
+    )
+
+    response.append(
+        f"Over 2.5: "
+        f"{home_stats['over25']:.0f}%"
+    )
+
+    response.append(
+        f"Under 3.5: "
+        f"{home_stats['under35']:.0f}%"
+    )
+
+    response.append(
+        f"BTTS: "
+        f"{home_stats['btts']:.0f}%"
+    )
+
+    response.append(
+        f"Scoring: "
+        f"{home_stats['scoring']:.0f}%"
+    )
+
+    response.append(
+        f"Clean sheets: "
+        f"{home_stats['clean']:.0f}%"
+    )
+
+    response.append(
+        f"Sample: {home_stats['sample']} matches"
+    )
+
+    if home_stats["sample"] < 3:
+
+        response.append(
+            "⚠️ Small home sample."
         )
 
-        if home_stats["sample"] < 3:
-
-            output += (
-                "⚠️ Very small sample.\n"
-            )
-
-        elif home_stats["sample"] < 5:
-
-            output += (
-                "⚠️ Limited sample.\n"
-            )
-
-        output += "\n"
+    response.append("")
 
     # --------------------------------------------------------
-    # TEAM 2
+    # Team 2
     # --------------------------------------------------------
 
-    output += (
-        f"📊 {team2_display.upper()} — LAST 5\n"
-        f"Form: {form2}\n"
+    response.append(
+        f"📊 {t2_display.upper()} — LAST 5"
+    )
+
+    response.append(
+        f"Form: {form_string(recent2)}"
+    )
+
+    response.append(
         f"W/D/L: "
-        f"{stats2['wins']}/"
-        f"{stats2['draws']}/"
-        f"{stats2['losses']}\n"
+        f"{wins2}/{draws2}/{losses2}"
+    )
+
+    response.append(
         f"Goals scored: "
-        f"{stats2['goals_for']}\n"
+        f"{stats2['goals_for']}"
+    )
+
+    response.append(
         f"Goals conceded: "
-        f"{stats2['goals_against']}\n"
+        f"{stats2['goals_against']}"
+    )
+
+    response.append(
         f"Avg scored: "
-        f"{stats2['avg_for']:.1f}\n"
+        f"{stats2['avg_for']:.1f}"
+    )
+
+    response.append(
         f"Avg conceded: "
-        f"{stats2['avg_against']:.1f}\n"
+        f"{stats2['avg_against']:.1f}"
+    )
+
+    response.append(
         f"Avg total goals: "
-        f"{stats2['avg_total']:.1f}\n"
+        f"{stats2['avg_total']:.1f}"
+    )
+
+    response.append(
         f"Over 0.5: "
-        f"{pct(stats2['over05'])}\n"
+        f"{stats2['over05']:.0f}%"
+    )
+
+    response.append(
         f"Over 1.5: "
-        f"{pct(stats2['over15'])}\n"
+        f"{stats2['over15']:.0f}%"
+    )
+
+    response.append(
         f"Over 2.5: "
-        f"{pct(stats2['over25'])}\n"
+        f"{stats2['over25']:.0f}%"
+    )
+
+    response.append(
         f"Under 3.5: "
-        f"{pct(stats2['under35'])}\n"
+        f"{stats2['under35']:.0f}%"
+    )
+
+    response.append(
         f"BTTS: "
-        f"{pct(stats2['btts'])}\n"
+        f"{stats2['btts']:.0f}%"
+    )
+
+    response.append(
         f"Scoring consistency: "
-        f"{pct(stats2['scoring'])}\n"
+        f"{stats2['scoring']:.0f}%"
+    )
+
+    response.append(
         f"Clean sheets: "
-        f"{pct(stats2['clean'])}\n"
-        f"Sample: "
-        f"{stats2['sample']} matches\n\n"
+        f"{stats2['clean']:.0f}%"
     )
 
-    # --------------------------------------------------------
-    # AWAY
-    # --------------------------------------------------------
-
-    if away_stats:
-
-        output += (
-            f"✈️ {team2_display.upper()} — "
-            "RECENT AWAY\n"
-            f"Form: "
-            f"{form_string(away_records)}\n"
-            f"W/D/L: "
-            f"{away_stats['wins']}/"
-            f"{away_stats['draws']}/"
-            f"{away_stats['losses']}\n"
-            f"Avg scored: "
-            f"{away_stats['avg_for']:.1f}\n"
-            f"Avg conceded: "
-            f"{away_stats['avg_against']:.1f}\n"
-            f"Over 1.5: "
-            f"{pct(away_stats['over15'])}\n"
-            f"Over 2.5: "
-            f"{pct(away_stats['over25'])}\n"
-            f"BTTS: "
-            f"{pct(away_stats['btts'])}\n"
-            f"Clean sheets: "
-            f"{pct(away_stats['clean'])}\n"
-            f"Sample: "
-            f"{away_stats['sample']} matches\n"
-        )
-
-        if away_stats["sample"] < 3:
-
-            output += (
-                "⚠️ Very small sample.\n"
-            )
-
-        elif away_stats["sample"] < 5:
-
-            output += (
-                "⚠️ Limited sample.\n"
-            )
-
-        output += "\n"
-
-    # --------------------------------------------------------
-    # PROFILES
-    # --------------------------------------------------------
-
-    output += (
-        attacking_profile(
-            team1_display,
-            stats1,
-            home_stats
-        )
-        + "\n\n"
+    response.append(
+        f"Sample: {stats2['sample']} matches"
     )
 
-    output += (
-        defensive_profile(
-            team2_display,
-            stats2,
-            away_stats
-        )
-        + "\n\n"
+    response.append("")
+
+    # --------------------------------------------------------
+    # Team 2 away
+    # --------------------------------------------------------
+
+    response.append(
+        f"✈️ {t2_display.upper()} — RECENT AWAY"
     )
 
+    response.append(
+        f"Form: "
+        f"{form_string(away_records)}"
+    )
+
+    response.append(
+        f"Avg scored: "
+        f"{away_stats['avg_for']:.1f}"
+    )
+
+    response.append(
+        f"Avg conceded: "
+        f"{away_stats['avg_against']:.1f}"
+    )
+
+    response.append(
+        f"Over 1.5: "
+        f"{away_stats['over15']:.0f}%"
+    )
+
+    response.append(
+        f"Over 2.5: "
+        f"{away_stats['over25']:.0f}%"
+    )
+
+    response.append(
+        f"Under 3.5: "
+        f"{away_stats['under35']:.0f}%"
+    )
+
+    response.append(
+        f"BTTS: "
+        f"{away_stats['btts']:.0f}%"
+    )
+
+    response.append(
+        f"Scoring: "
+        f"{away_stats['scoring']:.0f}%"
+    )
+
+    response.append(
+        f"Clean sheets: "
+        f"{away_stats['clean']:.0f}%"
+    )
+
+    response.append(
+        f"Sample: {away_stats['sample']} matches"
+    )
+
+    if away_stats["sample"] < 3:
+
+        response.append(
+            "⚠️ Small away sample."
+        )
+
+    response.append("")
+
     # --------------------------------------------------------
-    # GOAL ENVIRONMENT
+    # Attacking profile
     # --------------------------------------------------------
 
-    output += (
-        "🎯 GOAL & DEFENSIVE INTELLIGENCE\n"
+    response.append(
+        f"🔥 {t1_display.upper()} — ATTACKING PROFILE"
+    )
+
+    if stats1["avg_for"] >= 1.7:
+        attack_level = "🔥 STRONG"
+
+    elif stats1["avg_for"] >= 1.2:
+        attack_level = "🟡 MODERATE"
+
+    else:
+        attack_level = "🔴 LOW"
+
+    response.append(
+        f"Attack level: {attack_level}"
+    )
+
+    response.append(
+        f"Avg goals scored: "
+        f"{stats1['avg_for']:.2f}"
+    )
+
+    response.append(
+        f"Scoring consistency: "
+        f"{stats1['scoring']:.0f}%"
+    )
+
+    response.append(
+        f"Recent home scoring: "
+        f"{home_stats['scoring']:.0f}%"
+    )
+
+    response.append("")
+
+    # --------------------------------------------------------
+    # Defensive profile
+    # --------------------------------------------------------
+
+    response.append(
+        f"🛡️ {t2_display.upper()} — DEFENSIVE PROFILE"
+    )
+
+    if stats2["avg_against"] <= 1.0:
+
+        defense_level = "🛡️ STRONG"
+
+    elif stats2["avg_against"] <= 1.5:
+
+        defense_level = "🟡 MODERATE"
+
+    else:
+
+        defense_level = "⚠️ VULNERABLE"
+
+    response.append(
+        f"Defensive level: {defense_level}"
+    )
+
+    response.append(
+        f"Avg conceded: "
+        f"{stats2['avg_against']:.2f}"
+    )
+
+    response.append(
+        f"Clean sheets: "
+        f"{stats2['clean']:.0f}%"
+    )
+
+    response.append(
+        f"Conceding rate: "
+        f"{stats2['conceding']:.0f}%"
+    )
+
+    response.append("")
+
+    # --------------------------------------------------------
+    # Goal intelligence
+    # --------------------------------------------------------
+
+    response.append(
+        "🎯 GOAL & DEFENSIVE INTELLIGENCE"
+    )
+
+    response.append(
         f"Average attacking output: "
-        f"{avg_attack:.2f} goals\n"
+        f"{(stats1['avg_for'] + stats2['avg_for']) / 2:.2f} goals"
+    )
+
+    response.append(
         f"Average goals conceded: "
-        f"{avg_conceded:.2f} goals\n"
+        f"{(stats1['avg_against'] + stats2['avg_against']) / 2:.2f} goals"
+    )
+
+    response.append(
         f"Combined goal environment: "
-        f"{combined:.2f}\n"
+        f"{combined_avg:.2f}"
+    )
+
+    response.append(
         f"Goal environment: "
-        f"{environment}\n\n"
+        f"{environment}"
     )
 
+    response.append("")
+
     # --------------------------------------------------------
-    # FORM ASSESSMENT
+    # Form assessment
     # --------------------------------------------------------
 
-    output += (
-        "📈 FORM ASSESSMENT\n"
-        f"{form_assessment}\n\n"
+    response.append(
+        "📈 RECENT FORM ASSESSMENT"
     )
 
+    response.append(
+        f"{t1_display}: "
+        f"{wins1} wins, "
+        f"{draws1} draws, "
+        f"{losses1} losses"
+    )
+
+    response.append(
+        f"{t2_display}: "
+        f"{wins2} wins, "
+        f"{draws2} draws, "
+        f"{losses2} losses"
+    )
+
+    response.append("")
+
     # --------------------------------------------------------
-    # MARKET SIGNALS
+    # Markets
     # --------------------------------------------------------
 
-    output += (
-        "📊 MARKET SIGNALS\n\n"
+    response.append(
+        "📊 MARKET SIGNALS"
     )
+
+    response.append("")
 
     for market, confidence in markets.items():
 
-        reason = market_reason(
-            market,
-            team1_display,
-            team2_display,
-            stats1,
-            stats2,
-            home_stats,
-            away_stats
+        # Give Over 0.5 a slightly different status
+        # because it is a broad market.
+        market_advice = advice(
+            confidence,
+            min(
+                stats1["sample"],
+                stats2["sample"]
+            )
         )
 
-        output += (
+        response.append(
             f"{market} — "
-            f"Confidence {confidence}%\n"
-            f"Grade: "
-            f"{grade(confidence)}\n"
-            f"Advice: "
-            f"{advice(confidence)}\n"
-            f"Reason: "
-            f"{reason}\n\n"
+            f"Confidence {confidence}%"
         )
 
-    # --------------------------------------------------------
-    # SMART PRIMARY SIGNAL
-    # --------------------------------------------------------
-
-    output += (
-        "⭐ PRIMARY STATISTICAL SIGNAL\n"
-        f"{primary_market} — "
-        f"Confidence {primary_conf}%\n"
-        f"Grade: "
-        f"{grade(primary_conf)}\n"
-        f"Advice: "
-        f"{advice(primary_conf)}\n\n"
-    )
-
-    # --------------------------------------------------------
-    # SECONDARY SIGNAL
-    # --------------------------------------------------------
-
-    if secondary_market:
-
-        output += (
-            "🥈 SECONDARY STATISTICAL SIGNAL\n"
-            f"{secondary_market} — "
-            f"Confidence {secondary_conf}%\n"
-            f"Grade: "
-            f"{grade(secondary_conf)}\n"
-            f"Advice: "
-            f"{advice(secondary_conf)}\n\n"
+        response.append(
+            f"Grade: {grade(confidence)}"
         )
 
-    # --------------------------------------------------------
-    # RISK FLAGS
-    # --------------------------------------------------------
-
-    if risk_flags:
-
-        output += (
-            "⚠️ RISK FLAGS\n"
+        response.append(
+            f"Advice: {market_advice}"
         )
 
-        for risk in risk_flags[:4]:
+        if market == "BTTS — Yes":
 
-            output += (
-                f"• {risk}\n"
+            reason = market_reason(
+                "btts",
+                t1_display,
+                t2_display,
+                stats1,
+                stats2,
+                home_stats,
+                away_stats,
             )
 
-        output += "\n"
+        elif market == "Over 0.5 Goals":
 
-    else:
+            reason = market_reason(
+                "over05",
+                t1_display,
+                t2_display,
+                stats1,
+                stats2,
+                home_stats,
+                away_stats,
+            )
 
-        output += (
-            "✅ RISK FLAGS\n"
-            "No major low-confidence markets detected.\n\n"
+        elif market == "Over 1.5 Goals":
+
+            reason = market_reason(
+                "over15",
+                t1_display,
+                t2_display,
+                stats1,
+                stats2,
+                home_stats,
+                away_stats,
+            )
+
+        elif market == "Over 2.5 Goals":
+
+            reason = market_reason(
+                "over25",
+                t1_display,
+                t2_display,
+                stats1,
+                stats2,
+                home_stats,
+                away_stats,
+            )
+
+        elif market == "Under 3.5 Goals":
+
+            reason = market_reason(
+                "under35",
+                t1_display,
+                t2_display,
+                stats1,
+                stats2,
+                home_stats,
+                away_stats,
+            )
+
+        elif market == "2–4 Total Goals":
+
+            reason = market_reason(
+                "two_to_four",
+                t1_display,
+                t2_display,
+                stats1,
+                stats2,
+                home_stats,
+                away_stats,
+            )
+
+        elif market.startswith(t1_display):
+
+            reason = (
+                f"{t1_display} scores in "
+                f"{stats1['scoring']:.0f}% of recent matches; "
+                f"home scoring rate is "
+                f"{home_stats['scoring']:.0f}%; "
+                f"{t2_display} concedes in "
+                f"{stats2['conceding']:.0f}% of recent matches."
+            )
+
+        else:
+
+            reason = (
+                f"{t2_display} scores in "
+                f"{stats2['scoring']:.0f}% of recent matches; "
+                f"away scoring rate is "
+                f"{away_stats['scoring']:.0f}%; "
+                f"{t1_display} concedes in "
+                f"{stats1['conceding']:.0f}% of recent matches."
+            )
+
+        response.append(
+            f"Reason: {reason}"
         )
 
+        response.append("")
+
     # --------------------------------------------------------
-    # DISCLAIMER
+    # Primary signal
     # --------------------------------------------------------
 
-    output += (
-        "⚠️ Statistical analysis is not a guarantee "
-        "of the match outcome. Use confidence figures "
-        "as indicators, not certainty."
+    response.append(
+        "⭐ PRIMARY STATISTICAL SIGNAL"
     )
 
-    return output
+    response.append(
+        f"{primary_market} — "
+        f"Confidence {primary_confidence}%"
+    )
+
+    response.append(
+        f"Grade: {grade(primary_confidence)}"
+    )
+
+    response.append(
+        f"Advice: "
+        f"{advice(primary_confidence)}"
+    )
+
+    response.append("")
+
+    # --------------------------------------------------------
+    # Data quality
+    # --------------------------------------------------------
+
+    response.append(
+        "🔎 DATA QUALITY"
+    )
+
+    response.append(
+        f"{t1_display}: "
+        f"{stats1['sample']} recent matches; "
+        f"{home_stats['sample']} recent home matches."
+    )
+
+    response.append(
+        f"{t2_display}: "
+        f"{stats2['sample']} recent matches; "
+        f"{away_stats['sample']} recent away matches."
+    )
+
+    if (
+        home_stats["sample"] < 3
+        or away_stats["sample"] < 3
+    ):
+
+        response.append(
+            "⚠️ Venue-specific samples are limited, "
+            "so venue statistics receive less weight."
+        )
+
+    response.append("")
+
+    response.append(
+        "⚠️ Statistical analysis is not a guarantee "
+        "of the match outcome. Confidence figures "
+        "are indicators, not certainty."
+    )
+
+    return "\n".join(response)
 
 
 # ============================================================
 # TELEGRAM COMMANDS
 # ============================================================
 
-async def start(
+async def start_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    message = (
-        "⚽ GOALLOGIC AI\n\n"
-        "Advanced football statistical analysis.\n\n"
-        "Send a match like:\n"
-        "Chelsea vs Arsenal\n\n"
-        "Or use:\n"
-        "/analyze Chelsea vs Arsenal\n\n"
-        "Use /apitest to check the OpenFoot connection."
-    )
 
     await update.message.reply_text(
-        message
+        "⚽ Welcome to GoalLogic AI!\n\n"
+        "Send me a match like:\n\n"
+        "Chelsea vs Arsenal\n\n"
+        "I will analyze recent form, "
+        "home/away data, goals, BTTS, "
+        "team scoring and market signals."
     )
 
 
-async def api_test(
+async def apitest_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    data = openfoot_get(
+    if not OPENFOOT_API_KEY:
+
+        await update.message.reply_text(
+            "❌ OPENFOOT_API_KEY is missing."
+        )
+
+        return
+
+    result = openfoot_get(
         "/v1/search",
-        {"q": "Chelsea"}
+        {
+            "q": "Chelsea"
+        }
     )
 
-    if data is not None:
+    if result:
 
         await update.message.reply_text(
             "✅ OPENFOOT TEST PASSED\n\n"
@@ -2240,8 +1946,7 @@ async def api_test(
 
         await update.message.reply_text(
             "❌ OPENFOOT TEST FAILED\n\n"
-            "The API could not be reached "
-            "or the API key was rejected."
+            "OpenFoot could not return data."
         )
 
 
@@ -2250,95 +1955,116 @@ async def analyze_command(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    text = " ".join(
-        context.args
-    ).strip()
-
-    if not text:
+    if not context.args:
 
         await update.message.reply_text(
-            "Use:\n/analyze Chelsea vs Arsenal"
+            "Use:\n"
+            "/analyze Chelsea vs Arsenal"
         )
 
         return
 
-    result = process_match_text(
+    text = " ".join(
+        context.args
+    )
+
+    await process_match_text(
+        update,
         text
     )
 
-    await update.message.reply_text(
-        result,
-        disable_web_page_preview=True
+
+# ============================================================
+# MATCH MESSAGE PROCESSING
+# ============================================================
+
+async def process_match_text(
+    update,
+    text
+):
+
+    pattern = re.compile(
+        r"^\s*(.+?)\s+(?:vs\.?|v\.?)\s+(.+?)\s*$",
+        re.IGNORECASE
     )
 
+    match = pattern.match(text)
 
-async def normal_message(
+    if not match:
+
+        await update.message.reply_text(
+            "⚽ Send a match like:\n\n"
+            "Chelsea vs Arsenal"
+        )
+
+        return
+
+    team1 = match.group(1).strip()
+    team2 = match.group(2).strip()
+
+    await update.message.reply_text(
+        "🔎 Analyzing the match...\n\n"
+        f"{team1} vs {team2}"
+    )
+
+    try:
+
+        result = analyze_match(
+            team1,
+            team2
+        )
+
+        await update.message.reply_text(
+            result
+        )
+
+    except Exception as e:
+
+        print(
+            "Analysis error:",
+            e
+        )
+
+        await update.message.reply_text(
+            "❌ An error occurred while "
+            "analyzing the match.\n\n"
+            "Please try again."
+        )
+
+
+async def message_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if (
-        not update.message
-        or not update.message.text
+    if not update.message:
+        return
+
+    text = (
+        update.message.text
+        or ""
+    ).strip()
+
+    if not text:
+        return
+
+    if re.search(
+        r"\s+(?:vs\.?|v\.?)\s+",
+        text,
+        re.IGNORECASE
     ):
 
-        return
+        await process_match_text(
+            update,
+            text
+        )
 
-    text = update.message.text.strip()
-
-    if " vs " not in text.lower():
+    else:
 
         await update.message.reply_text(
-            "Send a match like:\n"
+            "⚽ Send a match like:\n\n"
             "Chelsea vs Arsenal"
         )
-
-        return
-
-    result = process_match_text(
-        text
-    )
-
-    await update.message.reply_text(
-        result,
-        disable_web_page_preview=True
-    )
-
-
-# ============================================================
-# MATCH PROCESSOR
-# ============================================================
-
-def process_match_text(text):
-
-    parts = re.split(
-        r"\s+vs\.?\s+|\s+v\.?\s+",
-        text,
-        flags=re.IGNORECASE
-    )
-
-    if len(parts) != 2:
-
-        return (
-            "❌ Please use this format:\n"
-            "Chelsea vs Arsenal"
-        )
-
-    team1 = parts[0].strip()
-    team2 = parts[1].strip()
-
-    if not team1 or not team2:
-
-        return (
-            "❌ Please provide two teams.\n\n"
-            "Example:\n"
-            "Chelsea vs Arsenal"
-        )
-
-    return analyze_match(
-        team1,
-        team2
-    )
 
 
 # ============================================================
@@ -2359,7 +2085,7 @@ def main():
             "OPENFOOT_API_KEY is missing."
         )
 
-    # Start Render health server first
+    # Start Render health server
     health_thread = threading.Thread(
         target=start_health_server,
         daemon=True
@@ -2368,7 +2094,7 @@ def main():
     health_thread.start()
 
     print(
-        "Starting GoalLogic AI..."
+        "Starting GoalLogic AI Telegram bot..."
     )
 
     application = (
@@ -2380,14 +2106,14 @@ def main():
     application.add_handler(
         CommandHandler(
             "start",
-            start
+            start_command
         )
     )
 
     application.add_handler(
         CommandHandler(
             "apitest",
-            api_test
+            apitest_command
         )
     )
 
@@ -2402,12 +2128,12 @@ def main():
         MessageHandler(
             filters.TEXT
             & ~filters.COMMAND,
-            normal_message
+            message_handler
         )
     )
 
     print(
-        "GoalLogic AI is ready."
+        "GoalLogic AI Telegram bot is live."
     )
 
     application.run_polling(
