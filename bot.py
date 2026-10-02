@@ -387,28 +387,43 @@ def confidence_from_base(
     )
 
 
-def grade(confidence):
-    if confidence >= 78:
-        return "🔥 STRONG"
+def confidence_from_base(
+    base,
+    support=0,
+    counter=0,
+    sample=5
+):
+    """
+    Calibrated confidence model.
 
-    if confidence >= 68:
-        return "🟢 GOOD"
+    Uses:
+    - Base statistical probability
+    - Supporting evidence
+    - Contradicting evidence
+    - Sample-size reliability
 
-    if confidence >= 58:
-        return "🟡 MODERATE"
+    The model avoids excessive confidence from one statistic alone.
+    """
 
-    return "🔴 WEAK"
+    weight = sample_weight(sample)
 
+    # Pull raw probability toward 50% when the sample is small.
+    adjusted = 50 + ((base - 50) * 0.50 * weight)
 
-def advice(confidence):
-    if confidence >= 68:
-        return "BET"
+    # Supporting evidence helps, but cannot dominate the calculation.
+    adjusted += support * 0.20
 
-    if confidence >= 58:
-        return "CAUTION"
+    # Contradicting evidence receives a slightly stronger penalty.
+    adjusted -= counter * 0.25
 
-    return "AVOID"
+    # Additional reliability penalty for very small samples.
+    if sample < 3:
+        adjusted -= 2
 
+    # Keep confidence within a realistic statistical range.
+    return round(
+        max(50, min(85, adjusted))
+    )
 
 # ============================================================
 # FULL MATCH ANALYSIS
